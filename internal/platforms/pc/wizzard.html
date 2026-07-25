@@ -1,0 +1,2329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SailStream Config Wizard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg0:#0b0d11;--bg1:#10131a;--bg2:#161b25;--bg3:#1e2433;
+  --border:#252d3f;--border-hi:#2e3a52;
+  --cyan:#00e5ff;--cyan-dim:#007a8c;
+  --green:#00ff88;--green-dim:#005c30;
+  --amber:#ffb300;--amber-dim:#7a5200;
+  --red:#ff4444;--red-dim:#7a1515;
+  --purple:#a855f7;--purple-dim:#4a1a7a;
+  --blue:#58a6ff;--blue-dim:#1a4466;
+  --fg:#c8d4e8;--fg-dim:#5a6a85;--fg-hi:#e8f0ff;
+  --mono:'JetBrains Mono','SF Mono','Fira Code',monospace;
+  --sans:'Syne',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --radius:6px;--sidebar:224px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:14px}
+body{background:var(--bg0);color:var(--fg);font-family:var(--sans);height:100vh;overflow:hidden}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg1)}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--cyan-dim)}
+#app{display:flex;height:100vh}
+#sidebar{width:var(--sidebar);min-width:var(--sidebar);background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 0}
+nav{flex:1;overflow-y:auto;padding:4px 0}
+.nav-section{padding:12px 16px 4px;font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--fg-dim);font-weight:700}
+.nav-btn{display:flex;align-items:center;gap:10px;width:100%;padding:8px 16px;background:none;border:none;color:var(--fg-dim);font-family:var(--sans);font-size:13px;cursor:pointer;font-weight:600;text-align:left;transition:all .1s;border-left:2px solid transparent;white-space:nowrap}
+.nav-btn:hover{color:var(--fg-hi);background:var(--bg2)}
+.nav-btn.active{color:var(--cyan);border-left-color:var(--cyan);background:rgba(0,229,255,.06)}
+#main{flex:1;overflow-y:auto}
+#topbar{height:48px;padding:0 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--bg1);position:sticky;top:0;z-index:10}
+#topbar .logo{font-size:16px;font-weight:800;letter-spacing:.05em;color:var(--cyan);white-space:nowrap;display:flex;align-items:center;gap:8px}
+#topbar .logo span{color:var(--fg-dim);font-weight:400}
+.logo-img{height:22px;width:22px;object-fit:contain}
+#topbar h1{font-family:var(--sans);font-size:1.1rem;font-weight:700;color:var(--fg-hi)}
+.spacer{flex:1}
+.top-btn{padding:5px 13px;border-radius:var(--radius);font-size:12px;font-weight:700;
+  border:1px solid var(--border-hi);background:var(--bg2);color:var(--fg);transition:all .15s;white-space:nowrap}
+.top-btn:hover{background:var(--bg3);border-color:var(--cyan);color:var(--cyan)}
+.top-btn.primary{border-color:var(--cyan-dim);color:var(--cyan)}
+.top-btn.primary:hover{border-color:var(--cyan);background:var(--bg3)}
+.top-btn.danger:hover{border-color:var(--red);color:var(--red)}
+.badge{font-size:.65rem;padding:3px 10px;border-radius:12px;font-weight:700;background:var(--bg3);color:var(--fg-dim);border:1px solid var(--border);font-family:var(--mono)}
+.badge.ok{background:var(--green-dim);color:var(--green);border-color:var(--green)}
+.badge.warn{background:var(--amber-dim);color:var(--amber);border-color:var(--amber)}
+.badge.amber{background:var(--amber-dim);color:var(--amber);border-color:var(--amber)}
+.page{display:none;padding:24px 28px}
+.page.active{display:block}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+.card-title{font-family:var(--sans);font-size:.88rem;font-weight:700;margin-bottom:14px;color:var(--fg-hi);display:flex;align-items:center;gap:8px}
+.card-title::before{content:'';display:block;width:3px;height:14px;background:var(--cyan);border-radius:2px}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.form-full{grid-column:1/-1}
+.form-group{display:flex;flex-direction:column;gap:4px}
+label{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-dim);font-weight:700;font-family:var(--mono)}
+input,select,textarea{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg-hi);font-family:var(--mono);font-size:.82rem;padding:7px 10px;outline:none;transition:border-color .15s;width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 8px rgba(86,212,221,.1)}
+input[readonly]{background:var(--bg0);color:var(--fg-dim);cursor:not-allowed}
+textarea{resize:vertical;min-height:76px}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;padding-right:26px}
+.checkbox-row{display:flex;align-items:center;gap:7px}
+.checkbox-row input[type=checkbox]{width:14px;height:14px;accent-color:var(--cyan)}
+.checkbox-row label{text-transform:none;letter-spacing:0;font-size:.8rem;color:var(--fg);cursor:pointer;font-family:var(--sans);font-weight:600}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--radius);border:1px solid var(--border-hi);font-family:var(--sans);font-size:.78rem;cursor:pointer;transition:all .15s;font-weight:700;background:var(--bg2);color:var(--fg)}
+.btn-primary{background:var(--cyan);color:var(--bg0);border-color:var(--cyan)}
+.btn-primary:hover{background:#3dc9d6;box-shadow:0 0 16px rgba(86,212,221,.15)}
+.btn-ghost{background:transparent;color:var(--fg-dim)}
+.btn-ghost:hover{color:var(--fg-hi);border-color:var(--fg-dim);background:var(--bg3)}
+.btn-danger{background:transparent;color:var(--red);border-color:var(--red)}
+.btn-danger:hover{background:var(--red-dim)}
+.btn-sm{padding:4px 10px;font-size:.73rem}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:8px 10px;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-dim);border-bottom:2px solid var(--border);font-weight:700;font-family:var(--mono)}
+td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:.78rem;vertical-align:middle;font-family:var(--mono)}
+tr:hover td{background:var(--bg3)}
+.empty-state{text-align:center;padding:28px;color:var(--fg-dim);font-family:var(--mono);font-size:.82rem}
+.info-box{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:.76rem;color:var(--fg-dim);margin:8px 0;font-family:var(--mono)}
+.warn-box{background:rgba(210,153,34,.08);border:1px solid var(--amber);padding:10px 12px;border-radius:var(--radius);color:var(--amber);font-size:.78rem;font-family:var(--mono)}
+.divider{height:1px;background:var(--border);margin:12px 0}
+.section-label{font-size:.7rem;color:var(--fg-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;font-family:var(--mono)}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:20px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.stat-label{font-size:.62rem;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-dim);font-weight:700;font-family:var(--mono)}
+.stat-val{font-family:var(--sans);font-size:1.6rem;font-weight:700;color:var(--fg-hi);margin-top:2px}
+.stat-sub{font-size:.7rem;color:var(--fg-dim);margin-top:2px;font-family:var(--mono)}
+.db-table-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.db-table-btn{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:4px 10px;font-size:.76rem;color:var(--fg);cursor:pointer;font-family:var(--mono)}
+.db-table-btn.active{border-color:var(--cyan);color:var(--cyan)}
+.db-table-btn.view-type{font-style:italic;color:var(--purple)}
+.db-pager{display:flex;align-items:center;gap:10px;margin-top:10px;font-family:var(--mono);font-size:.76rem;color:var(--fg-dim)}
+.spacer{flex:1}
+.product-thumb{width:36px;height:36px;border-radius:4px;object-fit:cover}
+.product-thumb-placeholder{width:36px;height:36px;background:var(--bg3);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--fg-dim);font-weight:700}
+.pill{display:inline-block;padding:2px 7px;border-radius:10px;font-size:.66rem;font-weight:700;font-family:var(--mono)}
+.pill-green{background:var(--green-dim);color:var(--green)}
+.pill-red{background:var(--red-dim);color:var(--red)}
+.pill-blue{background:var(--blue-dim);color:var(--blue)}
+.pill-amber{background:var(--amber-dim);color:var(--amber)}
+.pill-gray{background:var(--bg3);color:var(--fg-dim)}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:100;display:none;justify-content:center;align-items:center;backdrop-filter:blur(3px)}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--bg1);border:1px solid var(--border-hi);border-radius:8px;width:min(750px,94vw);max-height:92vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,.5);display:flex;flex-direction:column}
+.modal-sm{max-width:520px}
+.modal-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.modal-header h2{font-family:var(--sans);font-size:.95rem;font-weight:700;flex:1;color:var(--fg-hi)}
+.modal-body{padding:20px;flex:1;overflow-y:auto}
+.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.tab-bar{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px;overflow-x:auto}
+.tab-btn{padding:7px 14px;background:none;border:none;color:var(--fg-dim);font-family:var(--sans);font-size:.78rem;cursor:pointer;font-weight:600;border-bottom:2px solid transparent;transition:all .12s;white-space:nowrap}
+.tab-btn.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+.ir-status-bar{display:none;margin-bottom:14px;padding:12px 16px;border-radius:6px;background:rgba(86,212,221,.07);border:1px solid var(--cyan-dim);font-family:var(--mono);font-size:.78rem;color:var(--cyan)}
+.ir-log-box{margin-top:8px;max-height:160px;overflow-y:auto;font-size:.7rem;color:var(--fg-dim);white-space:pre-wrap;display:none;background:var(--bg0);padding:8px;border-radius:4px;border:1px solid var(--border)}
+.ir-progress-wrap{margin-top:8px;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;display:none}
+.ir-progress-fill{height:100%;background:var(--cyan);width:0%;transition:width .4s;border-radius:2px}
+.ir-poll-note{font-size:.72rem;color:var(--fg-dim);font-family:var(--mono);margin-top:6px;display:none}
+.step-indicator{display:flex;align-items:center;gap:4px;margin-bottom:18px}
+.step-node{display:flex;flex-direction:column;align-items:center}
+.step-dot{width:22px;height:22px;border-radius:50%;background:var(--bg3);color:var(--fg-dim);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.7rem;font-family:var(--mono)}
+.step-dot.active{background:var(--cyan);color:var(--bg0)}
+.step-dot.done{background:var(--green);color:white}
+.step-line{flex:1;height:2px;background:var(--border)}
+.step-block{display:none}
+.step-block.active{display:block}
+.platform-option{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius);cursor:pointer;border:1px solid var(--border);margin-bottom:6px;transition:all .12s}
+.platform-option:hover{border-color:var(--cyan);background:var(--bg2)}
+.platform-option.selected{border-color:var(--cyan);background:rgba(86,212,221,.06)}
+.platform-option.disabled{opacity:.4;cursor:not-allowed}
+.po-icon{font-size:1.2rem}
+.po-name{font-weight:700;color:var(--fg-hi);flex:1}
+.po-count{font-size:.7rem;color:var(--fg-dim);font-family:var(--mono)}
+.subtype-option{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius);cursor:pointer;border:1px solid var(--border);margin-bottom:6px;transition:all .12s}
+.subtype-option:hover{border-color:var(--cyan);background:var(--bg2)}
+.subtype-option.selected{border-color:var(--cyan);background:rgba(86,212,221,.06)}
+.subtype-option.disabled{opacity:.4;cursor:not-allowed}
+.so-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.so-name{font-weight:700;color:var(--fg-hi)}
+.so-desc{font-size:.72rem;color:var(--fg-dim)}
+.so-used{font-size:.68rem;color:var(--red);font-family:var(--mono);margin-left:auto}
+.post-row{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.post-row-order{width:26px;height:26px;background:var(--bg3);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:.68rem;color:var(--fg-dim);flex-shrink:0;font-family:var(--mono);font-weight:700}
+.post-row-info{flex:1;min-width:0}
+.post-row-title{font-weight:700;font-size:.84rem;color:var(--fg-hi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.post-row-meta{font-size:.7rem;color:var(--fg-dim);margin-top:2px;font-family:var(--mono)}
+.post-row-actions{display:flex;gap:6px;flex-shrink:0}
+.image-upload-area{border:2px dashed var(--border);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;color:var(--fg-dim);background:var(--bg1);transition:all .2s;margin-bottom:10px}
+.image-upload-area:hover,.image-upload-area.drag-over{border-color:var(--cyan);color:var(--cyan);background:var(--bg2)}
+.image-grid{display:flex;flex-wrap:wrap;gap:8px}
+.img-card{width:88px;height:88px;border:1px solid var(--border);border-radius:4px;position:relative;overflow:hidden}
+.img-card img{width:100%;height:100%;object-fit:cover}
+.primary-badge{position:absolute;top:3px;left:3px;background:var(--cyan);color:var(--bg0);font-size:.6rem;padding:1px 4px;border-radius:2px;font-weight:700;font-family:var(--mono)}
+.img-order-num{position:absolute;bottom:3px;right:3px;background:rgba(0,0,0,.7);color:var(--fg-dim);font-size:.63rem;padding:1px 4px;border-radius:2px;font-family:var(--mono)}
+.img-actions{position:absolute;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;gap:4px;opacity:0;transition:opacity .15s}
+.img-card:hover .img-actions{opacity:1}
+.post-media-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.post-media-item{width:76px;height:76px;border:1px solid var(--border);border-radius:4px;position:relative;overflow:hidden;background:var(--bg3)}
+.post-media-item img{width:100%;height:100%;object-fit:cover}
+.del-btn{position:absolute;top:2px;right:2px;background:var(--red);color:white;border:none;border-radius:3px;width:15px;height:15px;font-size:.58rem;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700}
+#toast-container{position:fixed;bottom:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:7px}
+.toast{padding:9px 14px;border-radius:var(--radius);font-size:.78rem;color:white;box-shadow:0 4px 24px rgba(0,0,0,.5);font-family:var(--mono);font-weight:600;border:1px solid;animation:fadeIn .2s;max-width:360px}
+.toast-ok{background:var(--green-dim);border-color:var(--green);color:var(--green)}
+.toast-err{background:var(--red-dim);border-color:var(--red);color:var(--red)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.platform-card{border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px;background:var(--bg2)}
+.platform-card-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.pname{font-weight:700;color:var(--fg-hi);font-size:.9rem}
+.subtype-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border)}
+.st-icon{width:28px;height:28px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+.st-info{flex:1}
+.st-name{font-weight:600;color:var(--fg-hi);font-size:.8rem}
+.st-type{font-size:.7rem;color:var(--fg-dim)}
+.st-actions{display:flex;gap:4px}
+.ro-show{background:var(--bg0)!important;color:var(--fg-dim)!important;cursor:not-allowed}
+.auto-tag{font-size:.6rem;background:var(--blue-dim);color:var(--blue);padding:0 4px;border-radius:3px;font-weight:700;margin-left:4px;font-family:var(--mono)}
+.cred-section{margin:6px 0}
+.cred-section-title{font-size:.68rem;color:var(--fg-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;font-weight:700;font-family:var(--mono)}
+.cred-row{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.cred-label{font-size:.68rem;color:var(--fg-dim);min-width:90px;flex-shrink:0;font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+.cred-input{flex:1;font-size:.74rem!important;padding:4px 7px!important}
+.auto-grid{display:flex;flex-wrap:wrap;gap:8px 14px;margin:6px 0}
+#loading-overlay{position:fixed;inset:0;background:var(--bg0);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:16px}
+#loading-overlay .lo-text{font-family:var(--mono);font-size:.9rem;color:var(--cyan);display:flex;align-items:center;gap:8px}
+#loading-overlay .lo-sub{font-family:var(--mono);font-size:.75rem;color:var(--fg-dim)}
+.spinner{width:32px;height:32px;border:3px solid var(--bg3);border-top-color:var(--cyan);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="lo-text"><img src="logo.png" alt="" class="logo-img">SailStream Wizard</div>
+  <div class="lo-sub" id="lo-msg">Connecting to config server&hellip;</div>
+</div>
+
+<div id="app" style="display:none">
+<div id="sidebar">
+  <nav>
+    <div class="nav-section">Overview</div>
+    <button class="nav-btn active" onclick="nav('dashboard')">Dashboard</button>
+    <div class="nav-section">Database</div>
+    <button class="nav-btn" onclick="nav('db')">DB Browser</button>
+    <button class="nav-btn" onclick="nav('products')">Products</button>
+    <button class="nav-btn" onclick="nav('scheduled')">Sched Posts</button>
+    <div class="nav-section">Config</div>
+    <button class="nav-btn" onclick="nav('platforms')">Platforms</button>
+    <button class="nav-btn" onclick="nav('ai')">AI</button>
+    <button class="nav-btn" onclick="nav('posting')">Posting &amp; Scheduler</button>
+    <button class="nav-btn" onclick="nav('store')">Store</button>
+    <button class="nav-btn" onclick="nav('system')">System</button>
+    <button class="nav-btn" onclick="nav('paths')">Paths</button>
+    <button class="nav-btn" onclick="nav('review')">Review</button>
+    <div class="nav-section">Image Recognition</div>
+    <button class="nav-btn" onclick="nav('ir')">Train / Deploy</button>
+  </nav>
+</div>
+
+<div id="main">
+  <div id="topbar">
+    <div class="logo"><img src="logo.png" alt="" class="logo-img">Sail<span>Stream</span></div>
+    <h1 id="page-title">Dashboard</h1>
+    <span id="db-badge" class="badge">DB: checking&hellip;</span>
+    <span id="save-badge" class="badge">Loaded</span>
+    <span class="spacer"></span>
+    <button class="top-btn primary" onclick="saveConfig()">Save Config</button>
+    <button class="top-btn" onclick="restartDashboard()">Save &amp; Go to Dashboard</button>
+    <button class="top-btn danger" onclick="resetToDefault()">Reset to Safe Defaults</button>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div class="page active" id="page-dashboard">
+    <div class="stats-grid" id="stats-grid"></div>
+    <div class="form-grid">
+      <div class="card"><div class="card-title">Quick Info</div><div id="quick-info" style="font-size:.8rem;color:var(--fg-dim);line-height:2;font-family:var(--mono)"></div></div>
+      <div class="card"><div class="card-title">Database</div><div id="db-info" style="font-size:.8rem;color:var(--fg-dim);line-height:2;font-family:var(--mono)"></div></div>
+    </div>
+  </div>
+
+  <!-- DB BROWSER -->
+  <div class="page" id="page-db">
+    <div class="card">
+      <div class="card-title">Tables &amp; Views</div>
+      <div class="db-table-list" id="db-table-list"><span style="color:var(--fg-dim);font-size:.78rem;font-family:var(--mono)">Loading&hellip;</span></div>
+    </div>
+    <div id="db-browser-area"></div>
+  </div>
+
+  <!-- PRODUCTS -->
+  <div class="page" id="page-products">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+      <button class="btn btn-primary" onclick="openProductModal()">+ New Product</button>
+      <button class="btn btn-ghost" onclick="loadProducts()">Refresh</button>
+      <span id="product-count" style="color:var(--fg-dim);font-size:.75rem;font-family:var(--mono)"></span>
+    </div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th></th><th>Name / SKU</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="product-tbody"></tbody>
+    </table></div></div>
+  </div>
+
+  <!-- SCHEDULED POSTS -->
+  <div class="page" id="page-scheduled">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+      <button class="btn btn-primary" onclick="openPostModal()">+ New Post</button>
+      <button class="btn btn-ghost" onclick="loadScheduledPosts()">Refresh</button>
+      <span id="post-count" style="color:var(--fg-dim);font-size:.75rem;font-family:var(--mono)"></span>
+    </div>
+    <div id="post-list"></div>
+  </div>
+
+  <!-- PLATFORMS -->
+  <div class="page" id="page-platforms">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+      <button class="btn btn-primary" onclick="openAddPlatform()">+ Add Account / Bot / Page</button>
+      <span id="platform-summary" style="color:var(--fg-dim);font-size:.75rem;font-family:var(--mono)"></span>
+    </div>
+    <div id="platforms-list"></div>
+  </div>
+
+  <!-- AI -->
+  <div class="page" id="page-ai">
+    <form id="ai-form" onsubmit="return false">
+      <div class="card">
+        <div class="card-title">Provider &amp; Model</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Provider</label>
+            <select name="provider" onchange="patchAI()">
+              <option value="openai">OpenAI</option><option value="anthropic">Anthropic</option>
+              <option value="local">Local / Ollama</option><option value="custom">Custom</option>
+            </select></div>
+          <div class="form-group"><label>Model</label><input name="model" placeholder="gpt-4o / claude-3-5-sonnet&hellip;" oninput="patchAI()"></div>
+          <div class="form-group"><label>API Key</label><input name="api_key" type="password" placeholder="sk-&hellip;" oninput="patchAI()"></div>
+          <div class="form-group"><label>Base URL</label><input name="base_url" placeholder="https://api.openai.com/v1" oninput="patchAI()"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Generation Parameters</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Max Tokens</label><input name="max_tokens" type="number" oninput="patchAI()"></div>
+          <div class="form-group"><label>Temperature (0&ndash;2)</label><input name="temperature" type="number" step=".05" min="0" max="2" oninput="patchAI()"></div>
+          <div class="form-group"><label>Top P (0&ndash;1)</label><input name="top_p" type="number" step=".05" min="0" max="1" oninput="patchAI()"></div>
+          <div class="form-group"><label>Presence Penalty</label><input name="presence_penalty" type="number" step=".1" min="-2" max="2" oninput="patchAI()"></div>
+          <div class="form-group"><label>Frequency Penalty</label><input name="frequency_penalty" type="number" step=".1" min="-2" max="2" oninput="patchAI()"></div>
+          <div class="form-group"><label>Max Response Length (chars)</label><input name="max_response_length" type="number" oninput="patchAI()"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Instructions &amp; Tone</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Tone</label>
+            <select name="tone" onchange="patchAI()">
+              <option>Friendly</option><option>Professional</option><option>Casual</option>
+              <option>Enthusiastic</option><option>Formal</option><option>Humorous</option>
+            </select></div>
+          <div class="form-group form-full"><label>System Prompt</label><textarea name="system_prompt" rows="3" oninput="patchAI()"></textarea></div>
+          <div class="form-group form-full"><label>Post Instructions</label><textarea name="post_instructions" rows="2" oninput="patchAI()"></textarea></div>
+          <div class="form-group form-full"><label>Reply Instructions</label><textarea name="reply_instructions" rows="2" oninput="patchAI()"></textarea></div>
+          <div class="form-group form-full"><label>Scheduled Post Instructions</label><textarea name="scheduled_post_instructions" rows="2" oninput="patchAI()"></textarea></div>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- POSTING & SCHEDULER -->
+  <div class="page" id="page-posting">
+    <div class="card">
+      <div class="card-title">Global Rotation</div>
+      <form id="posting-form" onsubmit="return false">
+        <div class="form-grid">
+          <div class="form-group"><label>Rotation Mode</label>
+            <select name="rotation_mode" onchange="patchPosting()">
+              <option value="sequential">Sequential</option>
+              <option value="random">Random</option>
+              <option value="weighted">Weighted</option>
+            </select></div>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <div class="card-title">Fallback Random Posting (Global)</div>
+      <div class="info-box">These settings apply when no platform-specific posting is configured.</div>
+      <form id="fallback-form" onsubmit="return false">
+        <div class="form-grid">
+          <div class="form-group form-full"><div class="checkbox-row"><input type="checkbox" id="fb-enabled" onchange="patchFallback()"><label for="fb-enabled">Enable fallback random posting</label></div></div>
+          <div class="form-group"><label>Min Interval (hours)</label><input id="fb-min" type="number" min="1" oninput="patchFallback()"></div>
+          <div class="form-group"><label>Max Interval (hours)</label><input id="fb-max" type="number" min="1" oninput="patchFallback()"></div>
+          <div class="form-group"><label>Posts Per Cycle</label><input id="fb-cycle" type="number" min="1" oninput="patchFallback()"></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="fb-global" onchange="patchFallback()"><label for="fb-global">Use global content pool</label></div></div>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <div class="card-title">Scheduler &amp; Rate Limits</div>
+      <form id="sched-form" onsubmit="return false">
+        <div class="form-grid">
+          <div class="form-group"><label>Timezone</label><input name="timezone" placeholder="UTC" oninput="patchScheduler()"></div>
+          <div class="form-group"><label>Check Interval (min)</label><input name="check_interval_minutes" type="number" oninput="patchScheduler()"></div>
+          <div class="form-group"><label>Messages / Minute</label><input name="messages_per_minute" type="number" oninput="patchScheduler()"></div>
+          <div class="form-group"><label>Posts / Hour</label><input name="posts_per_hour" type="number" oninput="patchScheduler()"></div>
+          <div class="form-group"><label>Posts / Day</label><input name="posts_per_day" type="number" oninput="patchScheduler()"></div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- STORE -->
+  <div class="page" id="page-store">
+    <form id="store-form" onsubmit="return false">
+      <div class="card"><div class="card-title">Store Info</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Store Name</label><input name="name" oninput="patchStore()"></div>
+          <div class="form-group"><label>Currency</label><input name="currency" placeholder="IQD" oninput="patchStore()"></div>
+          <div class="form-group"><label>Contact Email</label><input name="email" type="email" oninput="patchStore()"></div>
+          <div class="form-group"><label>Contact Phone</label><input name="phone" oninput="patchStore()"></div>
+          <div class="form-group form-full"><label>Address</label><input name="address" oninput="patchStore()"></div>
+          <div class="form-group form-full"><label>Description</label><textarea name="description" rows="3" oninput="patchStore()"></textarea></div>
+          <div class="form-group form-full"><label>Welcome / Hello Message</label><textarea name="hello_message" rows="2" oninput="patchStore()"></textarea></div>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- SYSTEM -->
+  <div class="page" id="page-system">
+    <form id="system-form" onsubmit="return false">
+      <div class="card"><div class="card-title">Operation Mode</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Language</label><input name="language" placeholder="en" oninput="patchSystem()"></div>
+          <div class="form-group"><label>Operation Mode</label>
+            <select name="operation_mode" onchange="patchSystem()">
+              <option value="scheduled_wake">Scheduled Wake</option>
+              <option value="always_on">Always On</option>
+              <option value="manual_only">Manual Only</option>
+            </select></div>
+          <div class="form-group"><label>Wake Interval (min)</label><input name="interval_minutes" type="number" oninput="patchSystem()"></div>
+          <div class="form-group"><label>Idle Sleep (min)</label><input name="idle_sleep_minutes" type="number" oninput="patchSystem()"></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-title">Quiet Hours</div>
+        <div class="info-box">When enabled the bot will not post or reply during the specified window. Stored under <code style="color:var(--cyan)">scheduler.quiet_hours</code> in config.json.</div>
+        <div class="form-grid" style="margin-top:10px">
+          <div class="form-group form-full"><div class="checkbox-row"><input type="checkbox" id="sys-quiet-enabled" onchange="patchSystem()"><label for="sys-quiet-enabled">Enable Quiet Hours</label></div></div>
+          <div class="form-group"><label>From (HH:MM)</label><input name="quiet_from" placeholder="22:00" oninput="patchSystem()"></div>
+          <div class="form-group"><label>To (HH:MM)</label><input name="quiet_to" placeholder="08:00" oninput="patchSystem()"></div>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- PATHS -->
+  <div class="page" id="page-paths">
+    <form id="paths-form" onsubmit="return false">
+      <div class="card"><div class="card-title">File Paths</div>
+        <div class="form-grid">
+          <div class="form-group form-full"><label>Database (connects on save)</label><input name="database" placeholder="./data/sailstream.db" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Media Root</label><input name="media" placeholder="./media" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Post Images</label><input name="post_images" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Post Videos</label><input name="post_videos" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Scheduled Posts</label><input name="scheduled_posts" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Product Images</label><input name="product_images" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Training Images</label><input name="training_images" oninput="patchPaths()"></div>
+          <div class="form-group"><label>CNN Models</label><input name="cnn" placeholder="./cnn" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Sessions</label><input name="sessions" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Logs</label><input name="logs" placeholder="./logs" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Cache</label><input name="cache" placeholder="./cache" oninput="patchPaths()"></div>
+          <div class="form-group"><label>Backup</label><input name="backup" placeholder="./backup" oninput="patchPaths()"></div>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- REVIEW -->
+  <div class="page" id="page-review">
+    <div class="card"><div class="card-title">Full Config JSON (read-only)</div>
+      <pre id="review-json" style="font-size:.72rem;overflow-x:auto;color:var(--fg);white-space:pre-wrap;max-height:72vh;overflow-y:auto;font-family:var(--mono);background:var(--bg1);padding:14px;border-radius:var(--radius);border:1px solid var(--border)"></pre>
+    </div>
+  </div>
+
+  <!-- IMAGE RECOGNITION -->
+  <div class="page" id="page-ir">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchIRTab(0)">Overview</button>
+      <button class="tab-btn" onclick="switchIRTab(1)">New Training</button>
+      <button class="tab-btn" onclick="switchIRTab(2)">Production Train</button>
+      <button class="tab-btn" onclick="switchIRTab(3)">Multilingual</button>
+      <button class="tab-btn" onclick="switchIRTab(4)">Predict / Test</button>
+      <button class="tab-btn" onclick="switchIRTab(5)">Manage Models</button>
+      <button class="tab-btn" onclick="switchIRTab(6)">Settings</button>
+    </div>
+
+    <div class="tab-pane active" id="irtab-0">
+      <div class="card">
+        <div class="card-title">Image Recognition Overview</div>
+        <div class="info-box">Configure and train CNN models that identify products from images. Models are stored in the CNN Models path set under Paths.</div>
+        <div class="stats-grid" id="ir-overview-stats" style="margin-top:14px"></div>
+        <div style="margin-top:14px">
+          <button class="btn btn-primary" onclick="loadIRModels(true)">Refresh Model List</button>
+          <button class="btn btn-ghost" style="margin-left:8px" onclick="switchIRTab(1)">&rarr; Start New Training</button>
+        </div>
+        <div id="ir-model-overview-list" style="margin-top:14px"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="irtab-1">
+      <div class="card">
+        <div class="card-title">Train New Model</div>
+        <div class="info-box">Training runs asynchronously. After clicking Start Training you will receive a Job ID to poll for progress.</div>
+        <div id="ir-train-status" class="ir-status-bar"></div>
+        <div class="ir-progress-wrap" id="ir-train-progress-wrap"><div class="ir-progress-fill" id="ir-train-progress-fill"></div></div>
+        <div class="ir-poll-note" id="ir-train-poll-note"></div>
+        <div class="form-grid" style="margin-top:14px">
+          <div class="form-group form-full">
+            <label>Training Images Directory</label>
+            <div style="display:flex;gap:6px">
+              <input id="ir-train-data-dir" placeholder="./training_images or absolute path">
+              <button class="btn btn-ghost btn-sm" onclick="irBrowse('ir-train-data-dir','dir')" type="button">Browse</button>
+            </div>
+          </div>
+          <div class="form-group form-full"><label>Model Name</label><input id="ir-train-model-name" placeholder="my_product_model"></div>
+          <div class="form-group form-full">
+            <label>Output / Models Directory (blank = use Paths CNN Models)</label>
+            <div style="display:flex;gap:6px">
+              <input id="ir-train-models-dir" placeholder="leave blank to use Paths &rarr; CNN Models">
+              <button class="btn btn-ghost btn-sm" onclick="irBrowse('ir-train-models-dir','dir')" type="button">Browse</button>
+            </div>
+          </div>
+          <div class="form-group"><label>Epochs</label><input id="ir-t-epochs" type="number" value="30"></div>
+          <div class="form-group"><label>Batch Size</label><input id="ir-t-batch" type="number" value="8"></div>
+          <div class="form-group"><label>Num Angles (augment)</label><input id="ir-t-angles" type="number" value="3"></div>
+        </div>
+        <div class="divider"></div>
+        <div class="section-label">Training Options</div>
+        <div class="form-grid">
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="ir-t-hybrid"><label for="ir-t-hybrid">Use Hybrid Model</label></div></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="ir-t-augment"><label for="ir-t-augment">Data Augmentation</label></div></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="ir-t-multi"><label for="ir-t-multi">Multilingual Labels</label></div></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="ir-t-boost"><label for="ir-t-boost">Boost Accuracy Mode</label></div></div>
+        </div>
+        <div class="divider"></div>
+        <button class="btn btn-primary" onclick="irStartTrain()" type="button">Start Training</button>
+        <div class="ir-log-box" id="ir-train-log"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="irtab-2">
+      <div class="card">
+        <div class="card-title">Production / Incremental Training</div>
+        <div class="info-box">Retrain an existing model with new data. Runs asynchronously &mdash; poll the returned Job ID for progress.</div>
+        <div id="ir-prod-status" class="ir-status-bar"></div>
+        <div class="ir-progress-wrap" id="ir-prod-progress-wrap"><div class="ir-progress-fill" id="ir-prod-progress-fill"></div></div>
+        <div class="ir-poll-note" id="ir-prod-poll-note"></div>
+        <div class="form-grid" style="margin-top:14px">
+          <div class="form-group form-full">
+            <label>Base Model Path (.onnx / .h5 / .pkl)</label>
+            <div style="display:flex;gap:6px">
+              <input id="ir-prod-base-model" placeholder="./cnn/my_model.onnx">
+              <button class="btn btn-ghost btn-sm" onclick="irBrowse('ir-prod-base-model','file')" type="button">Browse</button>
+            </div>
+          </div>
+          <div class="form-group form-full">
+            <label>New Data Directory</label>
+            <div style="display:flex;gap:6px">
+              <input id="ir-prod-new-data" placeholder="./new_training_images">
+              <button class="btn btn-ghost btn-sm" onclick="irBrowse('ir-prod-new-data','dir')" type="button">Browse</button>
+            </div>
+          </div>
+          <div class="form-group form-full"><label>Output Model Name</label><input id="ir-prod-output-name" placeholder="retrained_v2"></div>
+          <div class="form-group">
+            <label>Strategy</label>
+            <select id="ir-prod-strategy">
+              <option value="fine_tune">Fine Tune (recommended)</option>
+              <option value="freeze_base">Freeze Base Layers</option>
+              <option value="full_retrain">Full Retrain</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Epochs</label><input id="ir-prod-epochs" type="number" value="30"></div>
+          <div class="form-group"><label>Batch Size</label><input id="ir-prod-batch" type="number" value="8"></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="ir-prod-augment"><label for="ir-prod-augment">Data Augmentation</label></div></div>
+        </div>
+        <div class="divider"></div>
+        <button class="btn btn-primary" onclick="irStartProductionTrain()" type="button">Start Production Training</button>
+        <div class="ir-log-box" id="ir-prod-log"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="irtab-3">
+      <div class="card">
+        <div class="card-title">Multilingual Label Augmentation</div>
+        <div class="info-box">Augments training folder names with Arabic and Kurdish translations. Runs asynchronously.</div>
+        <div id="ir-multi-status" class="ir-status-bar"></div>
+        <div class="ir-poll-note" id="ir-multi-poll-note"></div>
+        <div class="form-group form-full" style="margin-top:14px">
+          <label>Training Images Directory</label>
+          <div style="display:flex;gap:6px">
+            <input id="ir-multi-data-dir" placeholder="./training_images">
+            <button class="btn btn-ghost btn-sm" onclick="irBrowse('ir-multi-data-dir','dir')" type="button">Browse</button>
+          </div>
+        </div>
+        <div style="margin-top:14px">
+          <button class="btn btn-primary" onclick="irRunMultilingual()" type="button">Apply Multilingual Augmentation</button>
+        </div>
+        <div class="ir-log-box" id="ir-multi-log"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="irtab-4">
+      <div class="card">
+        <div class="card-title">Predict / Test Model</div>
+        <div class="info-box">Upload an image to test a trained model. If <b>Model Path</b> is blank, the default set under IR &rarr; Settings is used.</div>
+        <div id="ir-predict-status" class="ir-status-bar"></div>
+        <div class="form-grid" style="margin-top:14px">
+          <div class="form-group form-full">
+            <label>Model Path (blank = IR Settings default)</label>
+            <div style="display:flex;gap:6px">
+              <input id="ir-pred-model" placeholder="leave blank to use IR Settings default">
+              <button class="btn btn-ghost btn-sm" onclick="irBrowse('ir-pred-model','file')" type="button">Browse</button>
+            </div>
+          </div>
+          <div class="form-group form-full">
+            <label>Upload Image File</label>
+            <input type="file" id="ir-pred-file-input" accept="image/*" style="flex:1" onchange="irUploadPredictImage(event)">
+          </div>
+          <div class="form-group form-full">
+            <label>&mdash; OR &mdash; Image Path on Disk</label>
+            <div style="display:flex;gap:6px">
+              <input id="ir-pred-image-path" placeholder="/path/to/image.jpg">
+              <button class="btn btn-ghost btn-sm" onclick="irBrowse('ir-pred-image-path','file')" type="button">Browse</button>
+            </div>
+          </div>
+          <div class="form-group"><label>Top K Results</label><input id="ir-pred-topk" type="number" value="3" min="1" max="10"></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="ir-pred-tta" checked><label for="ir-pred-tta">Use TTA (test-time augmentation)</label></div></div>
+        </div>
+        <div class="divider"></div>
+        <button class="btn btn-primary" onclick="irRunPredict()" type="button">Run Prediction</button>
+        <div id="ir-predict-results" style="margin-top:14px"></div>
+        <div class="ir-log-box" id="ir-pred-log"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="irtab-5">
+      <div class="card">
+        <div class="card-title">Manage Trained Models</div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button class="btn btn-primary" onclick="loadIRModels(true)">Refresh</button>
+        </div>
+        <div id="ir-models-list"><div class="empty-state">Click Refresh to load models.</div></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="irtab-6">
+      <div class="card">
+        <div class="card-title">Global Image Recognition Settings</div>
+        <div class="info-box">Saved to config.json under <b>image_recognition</b>. Used as defaults when no per-request values are provided.</div>
+        <form id="ir-settings-form" onsubmit="return false">
+          <div class="form-grid" style="margin-top:14px">
+            <div class="form-group form-full"><div class="checkbox-row"><input type="checkbox" id="irs-enabled" onchange="patchIRSettings()"><label for="irs-enabled">Enable image recognition globally</label></div></div>
+            <div class="form-group form-full"><label>Default Model Path</label><input id="irs-model-path" placeholder="./cnn/model.onnx" oninput="patchIRSettings()"></div>
+            <div class="form-group"><label>Confidence Threshold (0&ndash;1)</label><input id="irs-confidence" type="number" step=".05" min="0" max="1" oninput="patchIRSettings()"></div>
+            <div class="form-group"><label>Max Image Size (px)</label><input id="irs-maxsize" type="number" oninput="patchIRSettings()"></div>
+            <div class="form-group"><label>Default Epochs</label><input id="irs-epochs" type="number" oninput="patchIRSettings()"></div>
+            <div class="form-group"><label>Default Batch Size</label><input id="irs-batch" type="number" oninput="patchIRSettings()"></div>
+            <div class="form-group"><label>Default Num Angles</label><input id="irs-angles" type="number" oninput="patchIRSettings()"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="section-label">Default Training Options</div>
+          <div class="form-grid">
+            <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="irs-hybrid" onchange="patchIRSettings()"><label for="irs-hybrid">Use Hybrid Model</label></div></div>
+            <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="irs-augment" onchange="patchIRSettings()"><label for="irs-augment">Data Augmentation</label></div></div>
+            <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="irs-multi" onchange="patchIRSettings()"><label for="irs-multi">Multilingual Labels</label></div></div>
+            <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="irs-boost" onchange="patchIRSettings()"><label for="irs-boost">Boost Accuracy Mode</label></div></div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-backdrop" id="add-platform-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header"><h2 id="add-plat-title">Add Account / Bot / Page</h2><button class="btn btn-ghost btn-sm" onclick="closeModal('add-platform-modal')">&#10005;</button></div>
+    <div class="modal-body">
+      <div class="step-indicator">
+        <div class="step-node"><div class="step-dot active" id="sdot-1">1</div></div>
+        <div class="step-line"></div>
+        <div class="step-node"><div class="step-dot" id="sdot-2">2</div></div>
+        <div class="step-line"></div>
+        <div class="step-node"><div class="step-dot" id="sdot-3">3</div></div>
+      </div>
+      <div class="step-block active" id="step-1"><div id="platform-options-list"></div></div>
+      <div class="step-block" id="step-2"><div id="subtype-options-list"></div></div>
+      <div class="step-block" id="step-3">
+        <div class="form-group" style="margin-bottom:12px"><label>Display Name <span style="color:var(--red)">*</span></label><input id="new-subtype-name" placeholder="e.g. My Page, @mybot, Personal Account"></div>
+        <div id="new-cred-fields"></div>
+        <div class="divider"></div>
+        <div class="section-label">Automation</div>
+        <div class="auto-grid">
+          <div class="checkbox-row"><input type="checkbox" id="aut-auto_reply" checked><label for="aut-auto_reply">Auto Reply</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="aut-answer_dm" checked><label for="aut-answer_dm">Answer DM</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="aut-answer_dm-groups"><label for="aut-answer_dm-groups">Include Groups</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="aut-answer_comments"><label for="aut-answer_comments">Answer Comments</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="aut-welcome_message"><label for="aut-welcome_message">Welcome Message</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="aut-auto_heart"><label for="aut-auto_heart">Auto Heart</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="aut-auto_follow"><label for="aut-auto_follow">Auto Follow</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="aut-auto_repost"><label for="aut-auto_repost">Auto Repost</label></div>
+        </div>
+        <div class="divider"></div>
+        <div class="section-label">Daily Limits</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Daily Messages</label><input id="lim-daily_messages" type="number" value="200"></div>
+          <div class="form-group"><label>Daily Posts</label><input id="lim-daily_posts" type="number" value="5"></div>
+          <div class="form-group"><label>Daily Hearts</label><input id="lim-daily_hearts" type="number" value="100"></div>
+          <div class="form-group"><label>Daily Follows</label><input id="lim-daily_follows" type="number" value="50"></div>
+          <div class="form-group"><label>Daily Comments</label><input id="lim-daily_comments" type="number" value="50"></div>
+          <div class="form-group"><label>Hourly Posts</label><input id="lim-hourly_posts" type="number" value="2"></div>
+        </div>
+        <div class="divider"></div>
+        <div class="section-label">Random Posting (this account)</div>
+        <div class="form-grid">
+          <div class="form-group form-full"><div class="checkbox-row"><input type="checkbox" id="rp-enabled"><label for="rp-enabled">Enable random posting</label></div></div>
+          <div class="form-group"><label>Min Interval (hrs)</label><input id="rp-min" type="number" value="4"></div>
+          <div class="form-group"><label>Max Interval (hrs)</label><input id="rp-max" type="number" value="12"></div>
+          <div class="form-group"><label>Posts Per Cycle</label><input id="rp-cycle" type="number" value="1"></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="rp-global" checked><label for="rp-global">Use global pool</label></div></div>
+        </div>
+        <div class="divider"></div>
+        <div class="section-label">Image Recognition</div>
+        <div class="form-group form-full"><div class="checkbox-row"><input type="checkbox" id="ir-per-platform"><label for="ir-per-platform">Enable image recognition for this account</label></div></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="add-plat-back" onclick="addPlatformBack()" style="display:none;margin-right:auto">&larr; Back</button>
+      <button class="btn btn-ghost" onclick="closeModal('add-platform-modal')">Cancel</button>
+      <button class="btn btn-primary" id="add-plat-next" onclick="addPlatformNext()">Next &rarr;</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="edit-subtype-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header"><h2 id="edit-st-title">Edit</h2><button class="btn btn-ghost btn-sm" onclick="closeModal('edit-subtype-modal')">&#10005;</button></div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:12px"><label>Display Name</label><input id="edit-st-name"></div>
+      <div class="checkbox-row" style="margin-bottom:12px"><input type="checkbox" id="edit-st-enabled"><label for="edit-st-enabled">Enabled</label></div>
+      <div id="edit-cred-fields"></div>
+      <div class="divider"></div>
+      <div class="section-label">Automation</div>
+      <div class="auto-grid">
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-auto_reply"><label for="edit-aut-auto_reply">Auto Reply</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-answer_dm"><label for="edit-aut-answer_dm">Answer DM</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-answer_dm-groups"><label for="edit-aut-answer_dm-groups">Include Groups</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-answer_comments"><label for="edit-aut-answer_comments">Answer Comments</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-welcome_message"><label for="edit-aut-welcome_message">Welcome Message</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-auto_heart"><label for="edit-aut-auto_heart">Auto Heart</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-auto_follow"><label for="edit-aut-auto_follow">Auto Follow</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="edit-aut-auto_repost"><label for="edit-aut-auto_repost">Auto Repost</label></div>
+      </div>
+      <div class="divider"></div>
+      <div class="section-label">Daily Limits</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Daily Messages</label><input id="edit-lim-daily_messages" type="number"></div>
+        <div class="form-group"><label>Daily Posts</label><input id="edit-lim-daily_posts" type="number"></div>
+        <div class="form-group"><label>Daily Hearts</label><input id="edit-lim-daily_hearts" type="number"></div>
+        <div class="form-group"><label>Daily Follows</label><input id="edit-lim-daily_follows" type="number"></div>
+        <div class="form-group"><label>Daily Comments</label><input id="edit-lim-daily_comments" type="number"></div>
+        <div class="form-group"><label>Hourly Posts</label><input id="edit-lim-hourly_posts" type="number"></div>
+      </div>
+      <div class="divider"></div>
+      <div class="section-label">Random Posting</div>
+      <div class="form-grid">
+        <div class="form-group form-full"><div class="checkbox-row"><input type="checkbox" id="edit-rp-enabled"><label for="edit-rp-enabled">Enable random posting</label></div></div>
+        <div class="form-group"><label>Min Interval (hrs)</label><input id="edit-rp-min" type="number"></div>
+        <div class="form-group"><label>Max Interval (hrs)</label><input id="edit-rp-max" type="number"></div>
+        <div class="form-group"><label>Posts Per Cycle</label><input id="edit-rp-cycle" type="number"></div>
+        <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="edit-rp-global"><label for="edit-rp-global">Use global pool</label></div></div>
+      </div>
+      <div class="divider"></div>
+      <div class="section-label">Image Recognition</div>
+      <div class="form-group form-full"><div class="checkbox-row"><input type="checkbox" id="edit-ir-per-platform"><label for="edit-ir-per-platform">Enable image recognition for this account</label></div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('edit-subtype-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditSubtype()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="db-row-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header"><h2 id="db-row-title">Edit Row</h2><button class="btn btn-ghost btn-sm" onclick="closeModal('db-row-modal')">&#10005;</button></div>
+    <div class="modal-body"><div id="db-row-fields"></div></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('db-row-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDBRow()">Save Row</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="config-warnings-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header"><h2 id="cw-title">Heads up</h2><button class="btn btn-ghost btn-sm" onclick="closeModal('config-warnings-modal')">&#10005;</button></div>
+    <div class="modal-body"><div id="cw-list"></div></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('config-warnings-modal')">Go Back &amp; Fix</button>
+      <button class="btn btn-primary" id="cw-proceed-btn">Save Anyway</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="product-modal">
+  <div class="modal">
+    <div class="modal-header"><h2 id="product-modal-title">New Product</h2><button class="btn btn-ghost btn-sm" onclick="closeModal('product-modal')">Close</button></div>
+    <div class="modal-body">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('product',0)">Basic</button>
+        <button class="tab-btn" onclick="switchTab('product',1)">Pricing</button>
+        <button class="tab-btn" onclick="switchTab('product',2)">Stock</button>
+        <button class="tab-btn" onclick="switchTab('product',3)">Images</button>
+        <button class="tab-btn" onclick="switchTab('product',4)">Attributes</button>
+        <button class="tab-btn" onclick="switchTab('product',5)">Aliases</button>
+      </div>
+      <div class="tab-pane active" id="ptab-0">
+        <div class="form-grid">
+          <div class="form-group"><label>Name *</label><input id="p-name"></div>
+          <div class="form-group"><label>SKU</label><input id="p-sku"></div>
+          <div class="form-group"><label>Category</label><input id="p-category"></div>
+          <div class="form-group"><label>Subcategory</label><input id="p-subcategory"></div>
+          <div class="form-group form-full"><label>Tags (comma-separated)</label><input id="p-tags"></div>
+          <div class="form-group form-full"><label>Description</label><textarea id="p-description" rows="4"></textarea></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="p-is_active" checked><label for="p-is_active">Active (visible to AI)</label></div></div>
+          <div class="form-group"><div class="checkbox-row"><input type="checkbox" id="p-is_featured"><label for="p-is_featured">Featured</label></div></div>
+        </div>
+      </div>
+      <div class="tab-pane" id="ptab-1">
+        <div class="form-grid">
+          <div class="form-group"><label>Price *</label><input id="p-price" type="number" step="0.01" min="0"></div>
+          <div class="form-group"><label>Currency</label><input id="p-currency" placeholder="IQD"></div>
+          <div class="form-group"><label>Price Per Pack</label><input id="p-price_per_pack" type="number" step="0.01" min="0"></div>
+          <div class="form-group"><label>Qty Per Pack</label><input id="p-qty_per_pack" type="number" min="1"></div>
+        </div>
+      </div>
+      <div class="tab-pane" id="ptab-2">
+        <div class="form-grid">
+          <div class="form-group"><label>Stock Quantity</label><input id="p-stock" type="number" min="0" value="0"></div>
+          <div class="form-group"><label>Low Stock Threshold</label><input id="p-low_stock_threshold" type="number" min="0" value="10"></div>
+        </div>
+      </div>
+      <div class="tab-pane" id="ptab-3">
+        <p style="font-size:.78rem;color:var(--fg-dim);margin-bottom:10px;font-family:var(--mono)">First uploaded image becomes the <strong style="color:var(--cyan)">primary thumbnail</strong>.</p>
+        <div class="image-upload-area" id="img-drop-zone"
+          onclick="document.getElementById('img-file-input').click()"
+          ondragover="event.preventDefault();event.stopPropagation();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="handleImgDrop(event)">
+          Click or drag images here<br><span style="font-size:.7rem;font-family:var(--mono)">.jpg .png .webp .gif</span>
+        </div>
+        <input type="file" id="img-file-input" accept="image/*" multiple style="display:none" onchange="handleImgFileSelect(event)">
+        <div class="image-grid" id="img-preview-grid"></div>
+      </div>
+      <div class="tab-pane" id="ptab-4">
+        <div class="form-grid">
+          <div class="form-group"><label>Weight (kg)</label><input id="p-weight_kg" type="number" step="0.01"></div>
+          <div class="form-group"><label>Dimensions</label><input id="p-dimensions" placeholder="10x5x2 cm"></div>
+        </div>
+      </div>
+      <div class="tab-pane" id="ptab-5">
+        <div class="form-grid">
+          <div class="form-group"><label>Aliases EN</label><input id="p-aliases_en"></div>
+          <div class="form-group"><label>Aliases AR</label><input id="p-aliases_ar"></div>
+          <div class="form-group"><label>Aliases KU</label><input id="p-aliases_ku"></div>
+          <div class="form-group"><label>Uses EN</label><input id="p-uses_en"></div>
+          <div class="form-group"><label>Uses AR</label><input id="p-uses_ar"></div>
+          <div class="form-group"><label>Uses KU</label><input id="p-uses_ku"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('product-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProduct()">Save Product</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="post-modal">
+  <div class="modal">
+    <div class="modal-header"><h2 id="post-modal-title">New Scheduled Post</h2><button class="btn btn-ghost btn-sm" onclick="closeModal('post-modal')">Close</button></div>
+    <div class="modal-body">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('post',0)">Content</button>
+        <button class="tab-btn" onclick="switchTab('post',1)">Media</button>
+        <button class="tab-btn" onclick="switchTab('post',2)">Platforms</button>
+        <button class="tab-btn" onclick="switchTab('post',3)">Schedule</button>
+      </div>
+      <div class="tab-pane active" id="sotab-0">
+        <div class="form-grid">
+          <div class="form-group form-full"><label>Title (internal label)</label><input id="so-title"></div>
+          <div class="form-group form-full"><label>Caption / Description</label><textarea id="so-description" rows="5" placeholder="Write your post caption&hellip;"></textarea></div>
+          <div class="form-group form-full"><label>Hashtags (comma-separated)</label><input id="so-hashtags" placeholder="#tag1, #tag2"></div>
+        </div>
+      </div>
+      <div class="tab-pane" id="sotab-1">
+        <div style="display:flex;gap:7px;margin-bottom:10px">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('post-img-input').click()">+ Image</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('post-vid-input').click()">+ Video</button>
+        </div>
+        <input type="file" id="post-img-input" accept="image/*" multiple style="display:none" onchange="handlePostMediaSelect(event,'image')">
+        <input type="file" id="post-vid-input" accept="video/*" multiple style="display:none" onchange="handlePostMediaSelect(event,'video')">
+        <div class="post-media-grid" id="post-media-preview"></div>
+      </div>
+      <div class="tab-pane" id="sotab-2">
+        <div id="post-platforms-list" style="display:flex;flex-direction:column;gap:8px"></div>
+      </div>
+      <div class="tab-pane" id="sotab-3">
+        <div class="form-grid">
+          <div class="form-group"><label>Schedule Type</label>
+            <select id="so-sched-type">
+              <option value="manual">Manual</option>
+              <option value="once">Once</option>
+              <option value="recurring">Recurring</option>
+            </select></div>
+          <div class="form-group"><label>Date / Time (for Once)</label><input id="so-sched-datetime" type="datetime-local"></div>
+          <div class="form-group"><label>Interval (for Recurring)</label>
+            <select id="so-sched-interval">
+              <option value="">&mdash; select &mdash;</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select></div>
+          <div class="form-group"><label>Time of Day (HH:MM)</label><input id="so-sched-time" placeholder="14:30"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('post-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveScheduledPost()">Save Post</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+'use strict';
+var PLATFORM_META={
+  facebook: {label:'Facebook',subtypes:['account','page','group']},
+  instagram:{label:'Instagram',subtypes:['account','business']},
+  whatsapp: {label:'WhatsApp', subtypes:['account']},
+  telegram: {label:'Telegram', subtypes:['account','bot']},
+  tiktok:   {label:'TikTok',   subtypes:['account']},
+  twitter:  {label:'Twitter/X',subtypes:['account']},
+  viber:    {label:'Viber',    subtypes:['account','bot']}
+};
+var SUBTYPE_META={
+  account: {label:'Personal Account',desc:'Username/password or phone login',    color:'#3b82f6'},
+  page:    {label:'Facebook Page',   desc:'Managed page with API access token',  color:'#22c55e'},
+  group:   {label:'Facebook Group',  desc:'Group where you are admin',           color:'#f59e0b'},
+  business:{label:'Business Account',desc:'Instagram Business / Graph API',      color:'#a855f7'},
+  bot:     {label:'Bot',             desc:'Bot token integration (auto-webhook)',color:'#00e5ff'}
+};
+var CRED_FIELDS={
+  'facebook:account': [['acct_email','Email / Phone','text','user@email.com',false],['acct_password','Password','password','',false]],
+  'facebook:page':    [['page_access_token','Page Access Token','password','EAAxxxxxxxx',false],['page_id','Page ID','text','123456789',false],['page_name','Page Name','text','My Page',false]],
+  'facebook:group':   [['group_id','Group ID','text','123456789',false],['group_name','Group Name','text','My Group',false],['group_url','Group URL','text','https://facebook.com/groups/…',false]],
+  'instagram:account':[['username','Username','text','@handle',false],['password','Password','password','',false]],
+  'instagram:business':[['access_token','Access Token','password','EAAxxxxxxxx',false],['page_id','Page ID','text','123456789',false],['username','Username','text','@handle',false]],
+  'whatsapp:account': [['phone','Phone Number','text','+9647xxxxxxxxxx',false],['password','Password','password','',false],['two_fa_key','2FA Key','password','optional',false]],
+  'telegram:account': [['api_id','API ID','text','12345678',false],['api_hash','API Hash','password','abcdef…',false],['phone_number','Phone Number','text','+9647xxxxxxxx',false],['password','Password','password','optional 2FA',false]],
+  'telegram:bot':     [['bot_token','Bot Token','password','123456:ABCdef…',false],['bot_username','Bot Username','text','@mybotname',false],['webhook_url','Webhook URL','text','Auto-resolved by system',true]],
+  'tiktok:account':   [['username','Username','text','@handle',false],['password','Password','password','',false]],
+  'twitter:account':  [['api_key','API Key','text','xxxx',false],['api_secret','API Secret','password','xxxx',false],['access_token','Access Token','password','xxxx',false],['access_secret','Access Secret','password','xxxx',false],['bearer_token','Bearer Token','password','xxxx',false]],
+  'viber:account':    [['phone_number','Phone Number','text','+9647xxxxxxxxxx',false],['password','Password','password','',false]],
+  'viber:bot':        [['bot_token','Bot Token','password','xxxxxxx-xxxx-xxxx',false],['webhook_domain','Webhook Domain','text','yourdomain.com',false],['webhook_url','Webhook URL','text','Auto-resolved by system',true]]
+};
+
+var CRED_OPTIONAL={
+  'whatsapp:account': ['two_fa_key'],
+  'telegram:account': ['password']
+};
+
+function validateConfigForSave(){
+  var issues=[];
+  if(!cfg.platforms) return issues;
+  Object.keys(cfg.platforms).forEach(function(pname){
+    var p=cfg.platforms[pname];
+    if(!p || !p.enabled) return;
+    (p.subtypes||[]).forEach(function(st){
+      if(!st.enabled) return;
+      var key=pname+':'+st.type;
+      var fields=CRED_FIELDS[key]||[];
+      var optional=CRED_OPTIONAL[key]||[];
+      var auth=st.auth||{};
+      fields.forEach(function(f){
+        var fieldKey=f[0],label=f[1],isAuto=f[4];
+        if(isAuto) return;
+        if(optional.indexOf(fieldKey)>=0) return;
+        var val=auth[fieldKey];
+        if(val===undefined||val===null||String(val).trim()===''){
+          issues.push({
+            platform:pname,
+            subtype:st.type,
+            subtypeName:st.name||st.id,
+            field:fieldKey,
+            label:label
+          });
+        }
+      });
+    });
+  });
+  return issues;
+}
+
+function confirmConfigWarnings(issues){
+  return new Promise(function(resolve){
+    if(!issues.length){resolve(true);return}
+    var byTarget={};
+    issues.forEach(function(i){
+      var k=i.platform+'|'+i.subtypeName;
+      if(!byTarget[k]) byTarget[k]={platform:i.platform,subtypeName:i.subtypeName,fields:[]};
+      byTarget[k].fields.push(i.label);
+    });
+    var pm=PLATFORM_META||{};
+    var html=Object.keys(byTarget).map(function(k){
+      var t=byTarget[k];
+      var meta=pm[t.platform]||{label:t.platform};
+      return '<div class="warn-box" style="margin-bottom:8px">'
+        +'<strong>'+esc(meta.label)+' — '+esc(t.subtypeName)+'</strong>'
+        +'<div style="margin-top:4px">Missing: '+t.fields.map(esc).join(', ')+'</div>'
+        +'</div>';
+    }).join('');
+    document.getElementById('cw-title').textContent=
+      issues.length===1?'1 platform is missing a key setting':issues.length+' issues found before saving';
+    document.getElementById('cw-list').innerHTML=
+      '<p style="color:var(--fg-dim);font-size:.8rem;margin-bottom:10px">'
+      +'These platforms are enabled but missing credentials they need to actually run. '
+      +'You can save anyway and fill these in later, or go back and fix them now.</p>'+html;
+    var modal=document.getElementById('config-warnings-modal');
+    var btn=document.getElementById('cw-proceed-btn');
+    var settled=false;
+    function finish(result){
+      if(settled) return;
+      settled=true;
+      btn.onclick=null;
+      modal.classList.remove('open');
+      resolve(result);
+    }
+    btn.onclick=function(){finish(true)};
+    var observer=new MutationObserver(function(){
+      if(!modal.classList.contains('open')) finish(false);
+    });
+    observer.observe(modal,{attributes:true,attributeFilter:['class']});
+    modal.classList.add('open');
+  });
+}
+
+var cfg={};
+var editingProductId=null,editingPostId=null;
+var pendingProductImages=[],pendingPostMedia=[],currentPostPlatforms=[];
+var addPlatStep=1,addPlatPlatform='',addPlatSubtype='';
+var editStPlatform='',editStIndex=-1;
+var dbCurrentTable='',dbCurrentPage=0,dbCurrentLimit=50,dbCurrentTotal=0,dbCurrentSearch='';
+var dbEditRowData={},dbEditRowTable='',dbEditRowIdCol='',dbEditRowId='';
+var dbEditRowEditable=[];
+var irPollingIntervals={};
+var irModelsCache=null,irModelsCacheTime=0;
+var pageNames={
+  dashboard:'Dashboard',db:'Database Browser',products:'Products',
+  scheduled:'Scheduled Posts',platforms:'Platforms',ai:'AI',
+  posting:'Posting & Scheduler',store:'Store',system:'System',
+  paths:'Paths',review:'Review',ir:'Image Recognition'
+};
+
+function nav(page){
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});
+  document.querySelectorAll('.nav-btn').forEach(function(b){b.classList.remove('active')});
+  var panel=document.getElementById('page-'+page);
+  if(panel) panel.classList.add('active');
+  var btn=document.querySelector('.nav-btn[onclick="nav(\''+page+'\')"]');
+  if(btn) btn.classList.add('active');
+  document.getElementById('page-title').textContent=pageNames[page]||page;
+  if(page==='products')  loadProducts();
+  if(page==='scheduled') loadScheduledPosts();
+  if(page==='platforms') renderPlatformsList();
+  if(page==='ai')        fillAIForm();
+  if(page==='posting')   fillPostingForm();
+  if(page==='store')     fillStoreForm();
+  if(page==='system')    fillSystemForm();
+  if(page==='paths')     fillPathsForm();
+  if(page==='review')    showReview();
+  if(page==='dashboard') loadDashboard();
+  if(page==='db')        loadDBTables();
+  if(page==='ir')        { fillIRSettings(); loadIRModels(false); }
+}
+
+function toast(msg,type){
+  type=type||'ok';
+  var el=document.createElement('div');
+  el.className='toast toast-'+type;
+  el.textContent=msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(function(){el.remove()},3500);
+}
+
+async function api(url,method,body){
+  method=method||'GET';
+  var opts={method:method,headers:{'Content-Type':'application/json'}};
+  if(body) opts.body=JSON.stringify(body);
+  var r=await fetch(url,opts);
+  var data=await r.json().catch(function(){return{}});
+  if(!r.ok) throw new Error(data.error||r.statusText);
+  return data;
+}
+
+async function init(){
+  var overlay=document.getElementById('loading-overlay');
+  var msg=document.getElementById('lo-msg');
+  var retries=0,maxRetries=8;
+  while(retries<maxRetries){
+    try{
+      msg.textContent='Loading config…';
+      cfg=await api('/api/config');
+      overlay.style.display='none';
+      document.getElementById('app').style.display='flex';
+      document.getElementById('save-badge').textContent='Loaded';
+      document.getElementById('save-badge').className='badge ok';
+      var dbPath=cfg.paths&&cfg.paths.database?cfg.paths.database:null;
+      document.getElementById('db-badge').textContent=dbPath?'DB: '+dbPath:'DB: not set';
+      document.getElementById('db-badge').className=dbPath?'badge ok':'badge warn';
+      loadDashboard();
+      return;
+    }catch(e){
+      retries++;
+      msg.textContent='Retrying… ('+retries+'/'+maxRetries+'): '+e.message;
+      await new Promise(function(r){setTimeout(r,800*retries)});
+    }
+  }
+  msg.textContent='Failed to connect. Is the wizard server running on :7878?';
+  msg.style.color='var(--red)';
+}
+
+async function saveConfig(){
+  var issues=validateConfigForSave();
+  var proceed=await confirmConfigWarnings(issues);
+  if(!proceed){toast('Save cancelled — fix the highlighted fields','err');return}
+  try{
+    await api('/api/config','PUT',cfg);
+    var r=await api('/api/config/save','POST');
+    toast('Saved: '+r.saved);
+    document.getElementById('save-badge').textContent='Saved';
+    document.getElementById('save-badge').className='badge ok';
+  }catch(e){toast('Save failed: '+e.message,'err')}
+}
+
+function markUnsaved(){
+  document.getElementById('save-badge').textContent='Unsaved';
+  document.getElementById('save-badge').className='badge amber';
+}
+
+async function restartDashboard(){
+  var issues=validateConfigForSave();
+  var proceed=await confirmConfigWarnings(issues);
+  if(!proceed){toast('Cancelled — fix the highlighted fields','err');return}
+  if(!confirm('Save config and close the wizard, reopening the dashboard?')) return;
+  try{
+    await api('/api/config','PUT',cfg);
+    var r=await api('/api/restart-dashboard','POST');
+    var dashURL=r.dashboard_url||'http://localhost:9090';
+    document.body.innerHTML='<div style="color:var(--fg-hi);text-align:center;padding:120px 20px;font-size:1.1rem;font-family:var(--sans)">⟳ Launching dashboard…<br><span style="font-size:.82rem;color:var(--fg-dim);font-family:var(--mono)">Redirecting to '+dashURL+'</span></div>';
+    setTimeout(function(){window.location=dashURL},1500);
+  }catch(e){toast('Failed: '+e.message,'err')}
+}
+
+async function resetToDefault(){
+  if(!confirm('Reset config to safe defaults?\n\nThis will:\n• Disable ALL platforms and automation\n• Clear AI credentials\n• Set operation mode to Manual Only\n• Keep your paths, store info and meta\n\nConfig will be saved to disk immediately.')) return;
+  try{
+    cfg=await api('/api/config');
+
+    cfg.system={
+      language:'en',
+      operation_mode:'manual_only',
+      wake_policy:{interval_minutes:60,idle_sleep_minutes:120}
+    };
+
+    cfg.ai={
+      provider:'local',model:'',api_key:'',base_url:'',
+      generation:{max_tokens:500,temperature:0.7,top_p:1,presence_penalty:0,frequency_penalty:0},
+      instructions:{tone:'Friendly',system_prompt:'',post_instructions:'',reply_instructions:'',max_response_length:500,scheduled_post_instructions:''}
+    };
+
+    cfg.scheduler={
+      timezone:'UTC',
+      check_interval_minutes:30,
+      rate_limits:{messages_per_minute:5,posts_per_hour:1,posts_per_day:5},
+      quiet_hours:{enabled:false,from:'22:00',to:'08:00'}
+    };
+
+    Object.keys(cfg.platforms||{}).forEach(function(pname){
+      var p=cfg.platforms[pname];
+      p.enabled=false;
+      (p.subtypes||[]).forEach(function(st){st.enabled=false});
+      if(p.automation){
+        Object.keys(p.automation).forEach(function(k){
+          if(p.automation[k]&&typeof p.automation[k].enabled!=='undefined')
+            p.automation[k].enabled=false;
+        });
+      }
+      if(p.posting&&p.posting.random) p.posting.random.enabled=false;
+      if(p.posting&&p.posting.manual) p.posting.manual.enabled=false;
+    });
+
+    cfg.posting={
+      rotation_mode:'sequential',
+      fallback:{random:{enabled:false,interval_hours:{min:4,max:12},posts_per_cycle:1,use_global:false}},
+      scheduled_posts_summary:{}
+    };
+
+    cfg.image_recognition={
+      enabled:false,
+      model_path:(cfg.image_recognition&&cfg.image_recognition.model_path)||'',
+      confidence_threshold:0.75,
+      max_image_size_px:800,
+      training_defaults:{epochs:10,batch_size:8,num_angles:3,use_hybrid:false,use_augmentation:false,use_multilingual:false,boost_accuracy:false}
+    };
+
+    cfg.scheduled_posts=[];
+    cfg.content={posts:[],media:[],hashtags:[],categories:[],last_used_index:0};
+
+    await saveConfig();
+    toast('Reset to safe defaults and saved');
+    loadDashboard();
+  }catch(e){toast('Reset failed: '+e.message,'err')}
+}
+
+async function loadDashboard(){
+  var sg=document.getElementById('stats-grid');
+  var platforms=cfg.platforms||{};
+  var enabled=Object.values(platforms).filter(function(p){return p.enabled}).length;
+  var total=Object.keys(platforms).length;
+  var subtypes=0;
+  Object.values(platforms).forEach(function(p){subtypes+=(p.subtypes||[]).length});
+  var stats=[
+    {label:'Store',     val:(cfg.store&&cfg.store.name)||'--',    sub:'name'},
+    {label:'AI',        val:(cfg.ai&&cfg.ai.model)||'--',         sub:(cfg.ai&&cfg.ai.provider)||''},
+    {label:'Platforms', val:enabled+'/'+total,                    sub:subtypes+' accounts/bots/pages'},
+    {label:'Sched Posts',val:(cfg.scheduled_posts||[]).length,    sub:'in config'},
+    {label:'Mode',      val:(cfg.system&&cfg.system.operation_mode)||'--',sub:'operation'},
+    {label:'Currency',  val:(cfg.store&&cfg.store.currency)||'--',sub:'store'},
+  ];
+  sg.innerHTML=stats.map(function(s){
+    var vs=typeof s.val==='string'&&s.val.length>7?'1.1rem':'1.8rem';
+    return '<div class="stat-card"><div class="stat-label">'+esc(s.label)+'</div><div class="stat-val" style="font-size:'+vs+'">'+esc(String(s.val))+'</div><div class="stat-sub">'+esc(s.sub)+'</div></div>';
+  }).join('');
+  var qi=document.getElementById('quick-info');
+  qi.innerHTML='Store: <b style="color:var(--cyan)">'+esc(cfg.store&&cfg.store.name||'--')+'</b><br>Currency: <b>'+esc(cfg.store&&cfg.store.currency||'--')+'</b><br>AI: <b style="color:var(--cyan)">'+esc((cfg.ai&&cfg.ai.provider)||'--')+' / '+esc((cfg.ai&&cfg.ai.model)||'--')+'</b><br>Mode: <b>'+esc((cfg.system&&cfg.system.operation_mode)||'--')+'</b><br>Wake: <b>'+esc(String((cfg.system&&cfg.system.wake_policy&&cfg.system.wake_policy.interval_minutes)||'--'))+'min</b>';
+  var di=document.getElementById('db-info');
+  di.innerHTML='DB Path: <b style="color:var(--cyan)">'+esc(cfg.paths&&cfg.paths.database||'not set')+'</b><br>Media: <b>'+esc(cfg.paths&&cfg.paths.media||'--')+'</b><br>Logs: <b>'+esc(cfg.paths&&cfg.paths.logs||'--')+'</b>';
+  try{var prods=await api('/api/products');sg.innerHTML='<div class="stat-card"><div class="stat-label">Products</div><div class="stat-val">'+prods.length+'</div><div class="stat-sub">in database</div></div>'+sg.innerHTML}catch(e){}
+}
+
+async function loadDBTables(){
+  try{
+    var tables=await api('/api/db/tables');
+    var el=document.getElementById('db-table-list');
+    el.innerHTML=tables.map(function(t){
+      var cls='db-table-btn'+(t.type==='view'?' view-type':'');
+      return '<button class="'+cls+'" onclick="loadDBTable(\''+esc(t.name)+'\',0)">'+esc(t.name)+(t.type==='view'?'':'')+'</button>';
+    }).join('');
+  }catch(e){document.getElementById('db-table-list').innerHTML='<span style="color:var(--red);font-family:var(--mono);font-size:.78rem">DB not connected</span>'}
+}
+
+async function loadDBTable(tableName,offset){
+  dbCurrentTable=tableName;
+  dbCurrentPage=offset<0?0:offset;
+  var search=dbCurrentSearch;
+  document.querySelectorAll('.db-table-btn').forEach(function(b){
+    b.classList.toggle('active',b.textContent.trim()===tableName)
+  });
+  var area=document.getElementById('db-browser-area');
+  area.innerHTML='<div style="color:var(--fg-dim);font-family:var(--mono);font-size:.8rem;padding:12px">Loading '+esc(tableName)+'…</div>';
+  try{
+    var url='/api/db/query?table='+encodeURIComponent(tableName)+'&limit='+dbCurrentLimit+'&offset='+dbCurrentPage;
+    if(search) url+='&search='+encodeURIComponent(search);
+    var data=await api(url);
+    dbCurrentTotal=data.total;
+    renderDBTable(data);
+  }catch(e){area.innerHTML='<div class="warn-box">'+esc(e.message)+'</div>'}
+}
+
+function renderDBTable(data){
+  var area=document.getElementById('db-browser-area');
+  var cols=data.columns||[];
+  var rows=data.rows||[];
+  var editableCols=data.editable||[];
+  var isView=data.is_view;
+  var pkCol=data.pk_column||(cols.find(function(c){return c.pk})||cols[0]||{}).name||'id';
+  var totalPages=Math.ceil(dbCurrentTotal/dbCurrentLimit);
+  var curPage=Math.floor(dbCurrentPage/dbCurrentLimit)+1;
+  var html='<div class="card">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
+    +'<span style="font-family:var(--mono);font-size:.88rem;font-weight:700;color:var(--fg-hi)">'+esc(data.table)+'</span>'
+    +(isView?'<span class="pill pill-blue">view</span>':'<span class="pill pill-green">table</span>')
+    +'<span style="color:var(--fg-dim);font-size:.72rem;font-family:var(--mono)">'+dbCurrentTotal+' rows</span>'
+    +'<span style="flex:1"></span>'
+    +'<input id="db-search-input" placeholder="Search…" style="width:160px;font-size:.74rem;padding:4px 8px" value="'+esc(dbCurrentSearch)+'" oninput="dbCurrentSearch=this.value" onkeydown="if(event.key===\'Enter\')loadDBTable(\''+esc(data.table)+'\',0)">'
+    +'<button class="btn btn-ghost btn-sm" onclick="loadDBTable(\''+esc(data.table)+'\',0)">Search</button>'
+    +'</div>'
+    +'<div class="table-wrap"><table><thead><tr>';
+  cols.forEach(function(c){html+='<th>'+(c.pk?'PK ':'')+esc(c.name)+'</th>'});
+  if(!isView&&editableCols.length) html+='<th>Actions</th>';
+  html+='</tr></thead><tbody>';
+  if(!rows.length){html+='<tr><td colspan="'+(cols.length+1)+'" class="empty-state">No rows</td></tr>'}
+  rows.forEach(function(row){
+    html+='<tr>';
+    cols.forEach(function(c){
+      var val=row[c.name];
+      var display=val===null||val===undefined?'<span style="color:var(--fg-dim);font-style:italic">null</span>':esc(String(val));
+      if(String(val||'').length>80) display='<span title="'+esc(String(val))+'">'+esc(String(val).slice(0,80))+'…</span>';
+      html+='<td>'+display+'</td>';
+    });
+    if(!isView&&editableCols.length){
+      var rowId=row[pkCol];
+      html+='<td><div style="display:flex;gap:4px">'
+        +'<button class="btn btn-ghost btn-sm" onclick="openDBRowEdit('+JSON.stringify(data.table)+','+JSON.stringify(String(rowId))+','+JSON.stringify(pkCol)+','+JSON.stringify(editableCols)+','+JSON.stringify(row)+')">Edit</button>'
+        +'<button class="btn btn-danger btn-sm" onclick="deleteDBRow('+JSON.stringify(data.table)+','+JSON.stringify(String(rowId))+','+JSON.stringify(pkCol)+')">Del</button>'
+        +'</div></td>';
+    }
+    html+='</tr>';
+  });
+  html+='</tbody></table></div>';
+  var prevDisabled=dbCurrentPage<=0?' disabled':'';
+  var nextDisabled=dbCurrentPage+dbCurrentLimit>=dbCurrentTotal?' disabled':'';
+  html+='<div class="db-pager">'
+    +'<button class="btn btn-ghost btn-sm"'+prevDisabled+' onclick="loadDBTable(\''+esc(data.table)+'\','+(dbCurrentPage-dbCurrentLimit)+')">← Prev</button>'
+    +'<span>Page '+curPage+' of '+Math.max(1,totalPages)+'</span>'
+    +'<span class="spacer"></span>'
+    +'<button class="btn btn-ghost btn-sm"'+nextDisabled+' onclick="loadDBTable(\''+esc(data.table)+'\','+(dbCurrentPage+dbCurrentLimit)+')">Next →</button>'
+    +'</div></div>';
+  area.innerHTML=html;
+  var si=document.getElementById('db-search-input');
+  if(si&&dbCurrentSearch) si.focus();
+}
+
+function openDBRowEdit(tableName,rowId,pkCol,editableCols,rowData){
+  dbEditRowTable=tableName;dbEditRowId=rowId;dbEditRowIdCol=pkCol;
+  dbEditRowEditable=editableCols||[];
+  dbEditRowData=rowData||{};
+  document.getElementById('db-row-title').textContent='Edit row in '+tableName+' ('+pkCol+'='+rowId+')';
+  var editableSet={};dbEditRowEditable.forEach(function(k){editableSet[k]=true});
+  var html='';
+  Object.keys(rowData).forEach(function(k){
+    var val=rowData[k];
+    var isEditable=editableSet[k];
+    html+='<div class="form-group" style="margin-bottom:8px"><label>'+esc(k)+(isEditable?'':' <span style="color:var(--fg-dim)">(read-only)</span>')+'</label>';
+    if(isEditable){
+      var inputType='text';
+      if(k.includes('password')) inputType='password';
+      else if(typeof val==='number') inputType='number';
+      var boolFields=['is_active','is_featured','is_blocked','is_primary','enabled'];
+      if(boolFields.indexOf(k)>=0){
+        html+='<select id="dbf-'+esc(k)+'"><option value="1"'+(val==1?' selected':'')+'>Yes (1)</option><option value="0"'+(val==0?' selected':'')+'>No (0)</option></select>';
+      }else if(String(val||'').length>80){
+        html+='<textarea id="dbf-'+esc(k)+'" rows="3">'+esc(String(val||''))+'</textarea>';
+      }else{
+        html+='<input id="dbf-'+esc(k)+'" type="'+inputType+'" value="'+esc(String(val===null||val===undefined?'':val))+'">';
+      }
+    }else{
+      html+='<input class="ro-show" readonly value="'+esc(String(val===null||val===undefined?'null':val))+'">';
+    }
+    html+='</div>';
+  });
+  document.getElementById('db-row-fields').innerHTML=html;
+  document.getElementById('db-row-modal').classList.add('open');
+}
+
+async function saveDBRow(){
+  var updates={};
+  dbEditRowEditable.forEach(function(k){
+    var el=document.getElementById('dbf-'+k);
+    if(el) updates[k]=el.type==='number'?parseFloat(el.value)||0:el.value;
+  });
+  if(!Object.keys(updates).length){toast('No fields to update','err');return}
+  try{
+    await api('/api/db/row?table='+encodeURIComponent(dbEditRowTable)+'&id='+encodeURIComponent(dbEditRowId)+'&id_col='+encodeURIComponent(dbEditRowIdCol),'PUT',updates);
+    toast('Row saved');closeModal('db-row-modal');loadDBTable(dbEditRowTable,dbCurrentPage);
+  }catch(e){toast('Save failed: '+e.message,'err')}
+}
+
+async function deleteDBRow(tableName,rowId,pkCol){
+  if(!confirm('Delete row '+pkCol+'='+rowId+' from '+tableName+'?')) return;
+  try{
+    await api('/api/db/row?table='+encodeURIComponent(tableName)+'&id='+encodeURIComponent(rowId)+'&id_col='+encodeURIComponent(pkCol),'DELETE');
+    toast('Row deleted');loadDBTable(tableName,dbCurrentPage);
+  }catch(e){toast('Delete failed: '+e.message,'err')}
+}
+
+function renderPlatformsList(){
+  var el=document.getElementById('platforms-list');
+  var platforms=cfg.platforms||{};
+  var keys=Object.keys(platforms);
+  var totalSubs=0;
+  keys.forEach(function(k){totalSubs+=(platforms[k].subtypes||[]).length});
+  document.getElementById('platform-summary').textContent=keys.length+' platforms, '+totalSubs+' accounts/bots/pages';
+  if(!keys.length){el.innerHTML='<div class="empty-state">No platforms yet. Click <b>+ Add Account / Bot / Page</b> to start.</div>';return}
+  el.innerHTML=keys.map(function(pname){
+    var p=platforms[pname];
+    var meta=PLATFORM_META[pname]||{label:pname,subtypes:[]};
+    var subs=p.subtypes||[];
+    var activeCount=subs.filter(function(s){return s.enabled}).length;
+    var usedTypes=subs.map(function(s){return s.type});
+    var availableTypes=(meta.subtypes||[]).filter(function(t){return usedTypes.indexOf(t)<0});
+    var addBtn=availableTypes.length
+      ?'<button class="btn btn-ghost btn-sm" onclick="openAddPlatformFor(\''+pname+'\')">+ Add to '+esc(meta.label)+'</button>'
+      :'<span style="font-size:.72rem;color:var(--fg-dim);font-family:var(--mono)">All types added</span>';
+    return '<div class="platform-card">'
+      +'<div class="platform-card-header">'
+            +'<span class="pname">'+esc(meta.label)+'</span>'
+      +'<span style="font-size:.7rem;color:var(--fg-dim);font-family:var(--mono)">'+activeCount+'/'+subs.length+' active</span>'
+      +'<div class="checkbox-row" style="margin-left:10px"><input type="checkbox" id="plt-en-'+pname+'" '+(p.enabled?'checked':'')+' onchange="togglePlatformEnabled(\''+pname+'\',this.checked)"><label for="plt-en-'+pname+'" style="font-size:.7rem;color:var(--fg-dim)">Enabled</label></div>'
+      +'</div>'
+      +'<div class="platform-card-body">'
+      +(subs.length?subs.map(function(st,i){return renderSubtypeRow(pname,st,i)}).join(''):'<div style="color:var(--fg-dim);font-size:.76rem;font-family:var(--mono);padding:6px 0">No accounts/bots/pages yet.</div>')
+      +'<div style="margin-top:7px">'+addBtn+'</div>'
+      +'</div></div>';
+  }).join('');
+}
+
+function renderSubtypeRow(pname,st,idx){
+  var sm=SUBTYPE_META[st.type]||{label:st.type,color:'#71717a'};
+  var hasWebhook=(pname==='telegram'&&st.type==='bot')||(pname==='viber'&&st.type==='bot');
+  var webhookStatus='';
+  if(hasWebhook){
+    var wh=(st.auth&&st.auth.webhook_url)||'';
+    webhookStatus='<span style="font-size:.65rem;color:'+(wh?'var(--green)':'var(--fg-dim)')+';font-family:var(--mono);margin-right:6px">'+(wh?'webhook':'no webhook')+'</span>';
+  }
+  return '<div class="subtype-row">'
+    +'<div class="st-icon" style="background:'+sm.color+'22;color:'+sm.color+'"></div>'
+    +'<div class="st-info"><div class="st-name">'+esc(st.name||st.id)+'</div><div class="st-type">'+esc(sm.label)+' · '+(st.enabled?'<span style="color:var(--green)">active</span>':'<span style="color:var(--fg-dim)">disabled</span>')+'</div></div>'
+    +webhookStatus
+    +'<div class="st-actions">'
+    +'<button class="btn btn-ghost btn-sm" onclick="openEditSubtype(\''+esc(pname)+'\','+idx+')">Edit</button>'
+    +'<button class="btn btn-danger btn-sm" onclick="deleteSubtype(\''+esc(pname)+'\','+idx+')">Del</button>'
+    +'</div></div>';
+}
+
+function togglePlatformEnabled(pname,enabled){
+  if(!cfg.platforms) cfg.platforms={};
+  if(cfg.platforms[pname]) cfg.platforms[pname].enabled=enabled;
+  markUnsaved();
+}
+
+function openAddPlatform(){addPlatStep=1;addPlatPlatform='';addPlatSubtype='';updateAddPlatStep();document.getElementById('add-platform-modal').classList.add('open')}
+function openAddPlatformFor(pname){addPlatStep=2;addPlatPlatform=pname;addPlatSubtype='';updateAddPlatStep();document.getElementById('add-platform-modal').classList.add('open')}
+
+function updateAddPlatStep(){
+  for(var i=1;i<=3;i++){
+    var dot=document.getElementById('sdot-'+i);
+    dot.className='step-dot'+(i<addPlatStep?' done':i===addPlatStep?' active':'');
+  }
+  for(var i=1;i<=3;i++){
+    var blk=document.getElementById('step-'+i);
+    blk.className='step-block'+(i===addPlatStep?' active':'');
+  }
+  document.getElementById('add-plat-back').style.display=addPlatStep>1?'':'none';
+  document.getElementById('add-plat-next').textContent=addPlatStep===3?'Add':'Next →';
+  var titles=['','Select Platform','Select Type','Credentials & Settings'];
+  document.getElementById('add-plat-title').textContent=titles[addPlatStep]||'Add';
+  if(addPlatStep===1) renderStep1();
+  if(addPlatStep===2) renderStep2();
+  if(addPlatStep===3) renderStep3();
+}
+
+function renderStep1(){
+  var el=document.getElementById('platform-options-list');
+  el.innerHTML=Object.keys(PLATFORM_META).map(function(pname){
+    var meta=PLATFORM_META[pname];
+    var existing=cfg.platforms&&cfg.platforms[pname]?(cfg.platforms[pname].subtypes||[]).length:0;
+    var total=meta.subtypes.length;
+    var allUsed=existing>=total;
+    return '<div class="platform-option'+(allUsed?' disabled':'')+(addPlatPlatform===pname?' selected':'')+'" '
+      +(!allUsed?'onclick="selectAddPlatPlatform(\''+pname+'\')"':'')+' >'
+      +'<span class="po-name">'+esc(meta.label)+'</span>'
+      +'<span class="po-count">'+existing+'/'+total+' types used</span>'
+      +(allUsed?'<span style="font-size:.65rem;color:var(--red);font-family:var(--mono)">all used</span>':'')
+      +'</div>';
+  }).join('');
+}
+
+function renderStep2(){
+  var el=document.getElementById('subtype-options-list');
+  var meta=PLATFORM_META[addPlatPlatform];
+  if(!meta){el.innerHTML='';return}
+  var existing=cfg.platforms&&cfg.platforms[addPlatPlatform]?(cfg.platforms[addPlatPlatform].subtypes||[]).map(function(s){return s.type}):[];
+  el.innerHTML=meta.subtypes.map(function(stype){
+    var sm=SUBTYPE_META[stype]||{label:stype,desc:'',color:'#71717a'};
+    var alreadyUsed=existing.indexOf(stype)>=0;
+    return '<div class="subtype-option'+(alreadyUsed?' disabled':'')+(addPlatSubtype===stype?' selected':'')+'"'
+      +(!alreadyUsed?' onclick="selectAddPlatSubtype(\''+stype+'\')"':'')+' >'
+      +'<div class="so-dot" style="background:'+sm.color+'"></div>'
+      +'<div><div class="so-name">'+esc(sm.label)+'</div><div class="so-desc">'+esc(sm.desc)+'</div></div>'
+      +(alreadyUsed?'<span class="so-used">Already added</span>':'')
+      +'</div>';
+  }).join('');
+}
+
+function renderStep3(){
+  var key=addPlatPlatform+':'+addPlatSubtype;
+  var fields=CRED_FIELDS[key]||[];
+  var hasAuto=fields.some(function(f){return f[4]});
+  var el=document.getElementById('new-cred-fields');
+  el.innerHTML=(hasAuto?'<div class="info-box">Webhook URL is <strong>auto-resolved</strong> on first run — shown read-only for reference only.</div>':'')
+    +(fields.length?'<div class="cred-section"><div class="cred-section-title">Credentials</div>'
+    +fields.map(function(f){
+      return '<div class="cred-row"><span class="cred-label">'+esc(f[1])+'</span>'
+        +'<input id="new-cred-'+f[0]+'" type="'+f[2]+'" class="cred-input" placeholder="'+esc(f[3])+'"'+(f[4]?' readonly value="'+esc(f[3])+'"':'')+' >'
+        +(f[4]?'<span class="auto-tag">auto</span>':'')+'</div>';
+    }).join('')+'</div>'
+    :'<div class="info-box">No specific credentials needed for this type.</div>');
+  ['auto_reply','answer_dm','answer_comments','welcome_message','auto_heart','auto_follow','auto_repost'].forEach(function(k){
+    var el2=document.getElementById('aut-'+k);
+    if(el2) el2.checked=(k==='auto_reply'||k==='answer_dm');
+  });
+  document.getElementById('aut-answer_dm-groups').checked=false;
+  document.getElementById('lim-daily_messages').value=200;
+  document.getElementById('lim-daily_posts').value=5;
+  document.getElementById('lim-daily_hearts').value=100;
+  document.getElementById('lim-daily_follows').value=50;
+  document.getElementById('lim-daily_comments').value=50;
+  document.getElementById('lim-hourly_posts').value=2;
+  document.getElementById('rp-enabled').checked=false;
+  document.getElementById('rp-min').value=4;
+  document.getElementById('rp-max').value=12;
+  document.getElementById('rp-cycle').value=1;
+  document.getElementById('rp-global').checked=true;
+  document.getElementById('ir-per-platform').checked=false;
+  document.getElementById('new-subtype-name').value='';
+}
+
+function selectAddPlatPlatform(pname){addPlatPlatform=pname;renderStep1()}
+function selectAddPlatSubtype(stype){addPlatSubtype=stype;renderStep2()}
+
+function addPlatformNext(){
+  if(addPlatStep===1){if(!addPlatPlatform){toast('Select a platform','err');return}addPlatStep=2;updateAddPlatStep();}
+  else if(addPlatStep===2){
+    if(!addPlatSubtype){toast('Select a type','err');return}
+    var existing=cfg.platforms&&cfg.platforms[addPlatPlatform]?(cfg.platforms[addPlatPlatform].subtypes||[]).map(function(s){return s.type}):[];
+    if(existing.indexOf(addPlatSubtype)>=0){toast('Already added','err');return}
+    addPlatStep=3;updateAddPlatStep();
+  }else if(addPlatStep===3){commitNewSubtype();}
+}
+function addPlatformBack(){if(addPlatStep>1){addPlatStep--;updateAddPlatStep()}}
+
+function commitNewSubtype(){
+  var name=document.getElementById('new-subtype-name').value.trim();
+  if(!name){toast('Display name is required','err');return}
+  var key=addPlatPlatform+':'+addPlatSubtype;
+  var fields=CRED_FIELDS[key]||[];
+  var auth={};
+  fields.forEach(function(f){
+    if(f[4]) return;
+    var el2=document.getElementById('new-cred-'+f[0]);
+    if(el2&&el2.value.trim()) auth[f[0]]=el2.value.trim();
+  });
+  var aut={
+    auto_reply:      {enabled:!!document.getElementById('aut-auto_reply').checked},
+    answer_dm:       {enabled:!!document.getElementById('aut-answer_dm').checked, include_groups:!!document.getElementById('aut-answer_dm-groups').checked},
+    answer_comments: {enabled:!!document.getElementById('aut-answer_comments').checked},
+    welcome_message: {enabled:!!document.getElementById('aut-welcome_message').checked},
+    auto_heart:      {enabled:!!document.getElementById('aut-auto_heart').checked},
+    auto_follow:     {enabled:!!document.getElementById('aut-auto_follow').checked},
+    auto_repost:     {enabled:!!document.getElementById('aut-auto_repost').checked}
+  };
+  var lim={
+    daily_messages:parseInt(document.getElementById('lim-daily_messages').value)||200,
+    daily_posts:   parseInt(document.getElementById('lim-daily_posts').value)||5,
+    daily_hearts:  parseInt(document.getElementById('lim-daily_hearts').value)||100,
+    daily_follows: parseInt(document.getElementById('lim-daily_follows').value)||50,
+    daily_comments:parseInt(document.getElementById('lim-daily_comments').value)||50,
+    hourly_posts:  parseInt(document.getElementById('lim-hourly_posts').value)||2
+  };
+  var rp={
+    enabled:document.getElementById('rp-enabled').checked,
+    interval_hours:{min:parseInt(document.getElementById('rp-min').value)||4,max:parseInt(document.getElementById('rp-max').value)||12},
+    posts_per_cycle:parseInt(document.getElementById('rp-cycle').value)||1,
+    use_global:document.getElementById('rp-global').checked
+  };
+  var irEnabled=document.getElementById('ir-per-platform').checked;
+  var newST={id:addPlatPlatform+'_'+addPlatSubtype+'_'+Date.now(),name:name,type:addPlatSubtype,enabled:true,auth:auth,metadata:{image_recognition:irEnabled},automation:aut,limits:lim,posting:{random:rp}};
+  if(!cfg.platforms) cfg.platforms={};
+  if(!cfg.platforms[addPlatPlatform]){
+    cfg.platforms[addPlatPlatform]={enabled:true,platform:{type:addPlatPlatform,subtype:addPlatSubtype},subtypes:[],
+      automation:{auto_reply:{enabled:false},answer_dm:{enabled:false,include_groups:false},answer_comments:{enabled:false},welcome_message:{enabled:false},auto_heart:{enabled:false},auto_follow:{enabled:false},auto_repost:{enabled:false}},
+      limits:{daily_messages:200,daily_posts:5,daily_hearts:100,daily_follows:50,daily_comments:50,hourly_posts:2}};
+  }
+  if(!cfg.platforms[addPlatPlatform].subtypes) cfg.platforms[addPlatPlatform].subtypes=[];
+  cfg.platforms[addPlatPlatform].subtypes.push(newST);
+  cfg.platforms[addPlatPlatform].enabled=true;
+  markUnsaved();closeModal('add-platform-modal');renderPlatformsList();
+  toast('Added: '+name+' ('+addPlatPlatform+' '+addPlatSubtype+')');
+}
+
+function openEditSubtype(pname,idx){
+  editStPlatform=pname;editStIndex=idx;
+  var st=cfg.platforms[pname].subtypes[idx];
+  if(!st) return;
+  var sm=SUBTYPE_META[st.type]||{label:st.type};
+  document.getElementById('edit-st-title').textContent='Edit: '+esc(st.name)+' ('+sm.label+')';
+  document.getElementById('edit-st-name').value=st.name||'';
+  document.getElementById('edit-st-enabled').checked=!!st.enabled;
+  var key=pname+':'+st.type;
+  var fields=CRED_FIELDS[key]||[];
+  var auth=st.auth||{};
+  var hasAuto=fields.some(function(f){return f[4]});
+  var el=document.getElementById('edit-cred-fields');
+  el.innerHTML=(hasAuto?'<div class="info-box">Webhook URL is auto-resolved — read-only.</div>':'')
+    +(fields.length?'<div class="cred-section"><div class="cred-section-title">Credentials</div>'
+    +fields.map(function(f){
+      var val=auth[f[0]]||'';if(f[4]) val=val||f[3];
+      return '<div class="cred-row"><span class="cred-label">'+esc(f[1])+'</span>'
+        +'<input id="edit-cred-'+f[0]+'" type="'+f[2]+'" class="cred-input" value="'+esc(val)+'"'+(f[4]?' readonly':'')+' >'
+        +(f[4]?'<span class="auto-tag">auto</span>':'')+'</div>';
+    }).join('')+'</div>'
+    :'<div style="font-size:.76rem;color:var(--fg-dim)">No credentials for this type.</div>');
+  var aut=st.automation||{};
+  ['auto_reply','answer_dm','answer_comments','welcome_message','auto_heart','auto_follow','auto_repost'].forEach(function(k){
+    var box=document.getElementById('edit-aut-'+k);
+    if(box) box.checked=!!(aut[k]&&aut[k].enabled);
+  });
+  document.getElementById('edit-aut-answer_dm-groups').checked=!!(aut.answer_dm&&aut.answer_dm.include_groups);
+  var lim=st.limits||{};
+  document.getElementById('edit-lim-daily_messages').value=lim.daily_messages||200;
+  document.getElementById('edit-lim-daily_posts').value=lim.daily_posts||5;
+  document.getElementById('edit-lim-daily_hearts').value=lim.daily_hearts||100;
+  document.getElementById('edit-lim-daily_follows').value=lim.daily_follows||50;
+  document.getElementById('edit-lim-daily_comments').value=lim.daily_comments||50;
+  document.getElementById('edit-lim-hourly_posts').value=lim.hourly_posts||2;
+  var rp=(st.posting&&st.posting.random)||{};
+  document.getElementById('edit-rp-enabled').checked=!!rp.enabled;
+  document.getElementById('edit-rp-min').value=(rp.interval_hours&&rp.interval_hours.min)||4;
+  document.getElementById('edit-rp-max').value=(rp.interval_hours&&rp.interval_hours.max)||12;
+  document.getElementById('edit-rp-cycle').value=rp.posts_per_cycle||1;
+  document.getElementById('edit-rp-global').checked=rp.use_global!==false;
+  document.getElementById('edit-ir-per-platform').checked=!!(st.metadata&&st.metadata.image_recognition);
+  document.getElementById('edit-subtype-modal').classList.add('open');
+}
+
+function saveEditSubtype(){
+  var pname=editStPlatform,idx=editStIndex;
+  if(!cfg.platforms||!cfg.platforms[pname]||!cfg.platforms[pname].subtypes) return;
+  var st=cfg.platforms[pname].subtypes[idx];
+  if(!st) return;
+  st.name=document.getElementById('edit-st-name').value.trim()||st.name;
+  st.enabled=document.getElementById('edit-st-enabled').checked;
+  var key=pname+':'+st.type;
+  var fields=CRED_FIELDS[key]||[];
+  if(!st.auth) st.auth={};
+  fields.forEach(function(f){if(f[4]) return;var el2=document.getElementById('edit-cred-'+f[0]);if(el2) st.auth[f[0]]=el2.value});
+  if(!st.automation) st.automation={};
+  ['auto_reply','answer_dm','answer_comments','welcome_message','auto_heart','auto_follow','auto_repost'].forEach(function(k){
+    var box=document.getElementById('edit-aut-'+k);
+    if(!st.automation[k]) st.automation[k]={};
+    st.automation[k].enabled=box?box.checked:false;
+  });
+  var groupsBox=document.getElementById('edit-aut-answer_dm-groups');
+  st.automation.answer_dm.include_groups=groupsBox?groupsBox.checked:false;
+  if(!st.limits) st.limits={};
+  st.limits.daily_messages=parseInt(document.getElementById('edit-lim-daily_messages').value)||200;
+  st.limits.daily_posts=parseInt(document.getElementById('edit-lim-daily_posts').value)||5;
+  st.limits.daily_hearts=parseInt(document.getElementById('edit-lim-daily_hearts').value)||100;
+  st.limits.daily_follows=parseInt(document.getElementById('edit-lim-daily_follows').value)||50;
+  st.limits.daily_comments=parseInt(document.getElementById('edit-lim-daily_comments').value)||50;
+  st.limits.hourly_posts=parseInt(document.getElementById('edit-lim-hourly_posts').value)||2;
+  if(!st.posting) st.posting={};
+  st.posting.random={
+    enabled:document.getElementById('edit-rp-enabled').checked,
+    interval_hours:{min:parseInt(document.getElementById('edit-rp-min').value)||4,max:parseInt(document.getElementById('edit-rp-max').value)||12},
+    posts_per_cycle:parseInt(document.getElementById('edit-rp-cycle').value)||1,
+    use_global:document.getElementById('edit-rp-global').checked
+  };
+  if(!st.metadata) st.metadata={};
+  st.metadata.image_recognition=document.getElementById('edit-ir-per-platform').checked;
+  markUnsaved();closeModal('edit-subtype-modal');renderPlatformsList();toast('Saved: '+st.name);
+}
+
+function deleteSubtype(pname,idx){
+  var st=cfg.platforms[pname].subtypes[idx];
+  if(!st) return;
+  if(!confirm('Delete "'+st.name+'"?')) return;
+  cfg.platforms[pname].subtypes.splice(idx,1);
+  markUnsaved();renderPlatformsList();toast('Deleted: '+st.name);
+}
+
+function fillAIForm(){
+  var ai=cfg.ai||{};var f=document.getElementById('ai-form');
+  setVal(f,'provider',ai.provider||'local');setVal(f,'model',ai.model||'');
+  setVal(f,'api_key',ai.api_key||'');setVal(f,'base_url',ai.base_url||'');
+  setVal(f,'max_tokens',(ai.generation&&ai.generation.max_tokens)||1000);
+  setVal(f,'temperature',(ai.generation&&ai.generation.temperature)||0.7);
+  setVal(f,'top_p',(ai.generation&&ai.generation.top_p)||1);
+  setVal(f,'presence_penalty',(ai.generation&&ai.generation.presence_penalty)||0);
+  setVal(f,'frequency_penalty',(ai.generation&&ai.generation.frequency_penalty)||0);
+  setVal(f,'max_response_length',(ai.instructions&&ai.instructions.max_response_length)||500);
+  setVal(f,'tone',(ai.instructions&&ai.instructions.tone)||'Friendly');
+  setVal(f,'system_prompt',(ai.instructions&&ai.instructions.system_prompt)||'');
+  setVal(f,'post_instructions',(ai.instructions&&ai.instructions.post_instructions)||'');
+  setVal(f,'reply_instructions',(ai.instructions&&ai.instructions.reply_instructions)||'');
+  setVal(f,'scheduled_post_instructions',(ai.instructions&&ai.instructions.scheduled_post_instructions)||'');
+}
+function patchAI(){
+  var f=document.getElementById('ai-form');
+  if(!cfg.ai) cfg.ai={generation:{},instructions:{}};
+  if(!cfg.ai.generation) cfg.ai.generation={};if(!cfg.ai.instructions) cfg.ai.instructions={};
+  cfg.ai.provider=gv(f,'provider');cfg.ai.model=gv(f,'model');
+  cfg.ai.api_key=gv(f,'api_key');cfg.ai.base_url=gv(f,'base_url');
+  cfg.ai.generation.max_tokens=parseInt(gv(f,'max_tokens'))||1000;
+  cfg.ai.generation.temperature=parseFloat(gv(f,'temperature'))||0.7;
+  cfg.ai.generation.top_p=parseFloat(gv(f,'top_p'))||1;
+  cfg.ai.generation.presence_penalty=parseFloat(gv(f,'presence_penalty'))||0;
+  cfg.ai.generation.frequency_penalty=parseFloat(gv(f,'frequency_penalty'))||0;
+  cfg.ai.instructions.max_response_length=parseInt(gv(f,'max_response_length'))||500;
+  cfg.ai.instructions.tone=gv(f,'tone');
+  cfg.ai.instructions.system_prompt=gv(f,'system_prompt');
+  cfg.ai.instructions.post_instructions=gv(f,'post_instructions');
+  cfg.ai.instructions.reply_instructions=gv(f,'reply_instructions');
+  cfg.ai.instructions.scheduled_post_instructions=gv(f,'scheduled_post_instructions');
+  markUnsaved();
+}
+
+function fillPostingForm(){
+  var po=cfg.posting||{};var fb=(po.fallback&&po.fallback.random)||{};
+  var f=document.getElementById('posting-form');
+  setVal(f,'rotation_mode',po.rotation_mode||'sequential');
+  document.getElementById('fb-enabled').checked=!!fb.enabled;
+  document.getElementById('fb-min').value=(fb.interval_hours&&fb.interval_hours.min)||4;
+  document.getElementById('fb-max').value=(fb.interval_hours&&fb.interval_hours.max)||12;
+  document.getElementById('fb-cycle').value=fb.posts_per_cycle||1;
+  document.getElementById('fb-global').checked=fb.use_global!==false;
+  var sch=cfg.scheduler||{};var rl=sch.rate_limits||{};
+  var sf=document.getElementById('sched-form');
+  setVal(sf,'timezone',sch.timezone||'UTC');
+  setVal(sf,'check_interval_minutes',sch.check_interval_minutes||5);
+  setVal(sf,'messages_per_minute',rl.messages_per_minute||30);
+  setVal(sf,'posts_per_hour',rl.posts_per_hour||4);
+  setVal(sf,'posts_per_day',rl.posts_per_day||20);
+}
+function patchPosting(){
+  var f=document.getElementById('posting-form');
+  if(!cfg.posting) cfg.posting={};
+  cfg.posting.rotation_mode=gv(f,'rotation_mode');markUnsaved();
+}
+function patchFallback(){
+  if(!cfg.posting) cfg.posting={};if(!cfg.posting.fallback) cfg.posting.fallback={};
+  cfg.posting.fallback.random={
+    enabled:document.getElementById('fb-enabled').checked,
+    interval_hours:{min:parseInt(document.getElementById('fb-min').value)||4,max:parseInt(document.getElementById('fb-max').value)||12},
+    posts_per_cycle:parseInt(document.getElementById('fb-cycle').value)||1,
+    use_global:document.getElementById('fb-global').checked
+  };markUnsaved();
+}
+function patchScheduler(){
+  var f=document.getElementById('sched-form');
+  if(!cfg.scheduler) cfg.scheduler={rate_limits:{},quiet_hours:{}};
+  if(!cfg.scheduler.rate_limits) cfg.scheduler.rate_limits={};
+  cfg.scheduler.timezone=gv(f,'timezone');
+  cfg.scheduler.check_interval_minutes=parseInt(gv(f,'check_interval_minutes'))||5;
+  cfg.scheduler.rate_limits.messages_per_minute=parseInt(gv(f,'messages_per_minute'))||30;
+  cfg.scheduler.rate_limits.posts_per_hour=parseInt(gv(f,'posts_per_hour'))||4;
+  cfg.scheduler.rate_limits.posts_per_day=parseInt(gv(f,'posts_per_day'))||20;
+  markUnsaved();
+}
+
+function fillStoreForm(){
+  var s=cfg.store||{};var f=document.getElementById('store-form');
+  setVal(f,'name',s.name||'');setVal(f,'currency',s.currency||'IQD');
+  setVal(f,'email',(s.contact&&s.contact.email)||'');setVal(f,'phone',(s.contact&&s.contact.phone)||'');
+  setVal(f,'address',s.address||'');setVal(f,'description',s.description||'');setVal(f,'hello_message',s.hello_message||'');
+}
+function patchStore(){
+  var f=document.getElementById('store-form');
+  if(!cfg.store) cfg.store={contact:{}};if(!cfg.store.contact) cfg.store.contact={};
+  cfg.store.name=gv(f,'name');cfg.store.currency=gv(f,'currency');
+  cfg.store.contact.email=gv(f,'email');cfg.store.contact.phone=gv(f,'phone');
+  cfg.store.address=gv(f,'address');cfg.store.description=gv(f,'description');cfg.store.hello_message=gv(f,'hello_message');
+  markUnsaved();
+}
+
+function fillSystemForm(){
+  var sys=cfg.system||{};
+  var f=document.getElementById('system-form');
+  setVal(f,'language',sys.language||'en');
+  setVal(f,'operation_mode',sys.operation_mode||'scheduled_wake');
+  setVal(f,'interval_minutes',(sys.wake_policy&&sys.wake_policy.interval_minutes)||5);
+  setVal(f,'idle_sleep_minutes',(sys.wake_policy&&sys.wake_policy.idle_sleep_minutes)||60);
+  var qh=(cfg.scheduler&&cfg.scheduler.quiet_hours)||{};
+  document.getElementById('sys-quiet-enabled').checked=!!qh.enabled;
+  setVal(f,'quiet_from',qh.from||'22:00');
+  setVal(f,'quiet_to',qh.to||'08:00');
+}
+function patchSystem(){
+  var f=document.getElementById('system-form');
+  if(!cfg.system) cfg.system={wake_policy:{}};
+  if(!cfg.system.wake_policy) cfg.system.wake_policy={};
+  cfg.system.language=gv(f,'language');
+  cfg.system.operation_mode=gv(f,'operation_mode');
+  cfg.system.wake_policy.interval_minutes=parseInt(gv(f,'interval_minutes'))||5;
+  cfg.system.wake_policy.idle_sleep_minutes=parseInt(gv(f,'idle_sleep_minutes'))||60;
+  if(!cfg.scheduler) cfg.scheduler={rate_limits:{},quiet_hours:{}};
+  if(!cfg.scheduler.quiet_hours) cfg.scheduler.quiet_hours={};
+  cfg.scheduler.quiet_hours.enabled=document.getElementById('sys-quiet-enabled').checked;
+  cfg.scheduler.quiet_hours.from=gv(f,'quiet_from');
+  cfg.scheduler.quiet_hours.to=gv(f,'quiet_to');
+  markUnsaved();
+}
+
+function fillPathsForm(){
+  var p=cfg.paths||{};var f=document.getElementById('paths-form');
+  ['database','media','post_images','post_videos','scheduled_posts','product_images','training_images','cnn','sessions','logs','cache','backup'].forEach(function(k){setVal(f,k,p[k]||'')});
+}
+function patchPaths(){
+  var f=document.getElementById('paths-form');
+  if(!cfg.paths) cfg.paths={};
+  ['database','media','post_images','post_videos','scheduled_posts','product_images','training_images','cnn','sessions','logs','cache','backup'].forEach(function(k){cfg.paths[k]=gv(f,k)});
+  markUnsaved();
+}
+
+function showReview(){document.getElementById('review-json').textContent=JSON.stringify(cfg,null,2)}
+
+var allProducts=[];
+async function loadProducts(){
+  try{
+    allProducts=await api('/api/products');renderProductTable();
+    document.getElementById('product-count').textContent=allProducts.length+' products';
+  }catch(e){document.getElementById('product-tbody').innerHTML='<tr><td colspan="7" class="empty-state">'+esc(e.message)+'</td></tr>'}
+}
+function renderProductTable(){
+  var tbody=document.getElementById('product-tbody');
+  if(!allProducts.length){tbody.innerHTML='<tr><td colspan="7" class="empty-state">No products yet.</td></tr>';return}
+  tbody.innerHTML=allProducts.map(function(p){
+    return '<tr><td>'+(p.thumbnail_url?'<img class="product-thumb" src="'+thumbUrl(p)+'" onerror="this.style.display=\'none\'">':'<div class="product-thumb-placeholder">P</div>')+'</td>'
+      +'<td><div style="font-weight:700;color:var(--fg-hi)">'+esc(p.name)+'</div><div style="color:var(--fg-dim);font-size:.68rem">'+esc(p.sku||'--')+'</div></td>'
+      +'<td>'+esc(p.category||'--')+'</td>'
+      +'<td>'+esc(fmtPrice(p.price,p.currency))+'</td>'
+      +'<td>'+p.stock+(p.stock<=p.low_stock_threshold&&p.stock>0?'<span class="pill pill-red" style="margin-left:4px">low</span>':'')+'</td>'
+      +'<td>'+(p.is_active?'<span class="pill pill-green">active</span>':'<span class="pill pill-gray">off</span>')+'</td>'
+      +'<td><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-sm" onclick="editProduct(\''+esc(p.id)+'\')">Edit</button><button class="btn btn-danger btn-sm" onclick="deleteProduct(\''+esc(p.id)+'\','+JSON.stringify(p.name)+')">Del</button></div></td></tr>';
+  }).join('');
+}
+function thumbUrl(p){var parts=(p.thumbnail_url||'').split(/[/\\]/);return'/media/product_images/'+p.id+'/'+parts[parts.length-1]}
+function fmtPrice(price,currency){return price.toLocaleString()+' '+(currency||'IQD')}
+function openProductModal(product){
+  editingProductId=product?product.id:null;
+  pendingProductImages=[];
+  document.getElementById('product-modal-title').textContent=product?'Edit Product':'New Product';
+  var fields=['name','sku','category','subcategory','tags','description','price','currency','price_per_pack','qty_per_pack','stock','low_stock_threshold','weight_kg','dimensions','aliases_en','aliases_ar','aliases_ku','uses_en','uses_ar','uses_ku'];
+  fields.forEach(function(f){var el=document.getElementById('p-'+f);if(el) el.value=product?(product[f]||''):''});
+  document.getElementById('p-is_active').checked=product?product.is_active===1:true;
+  document.getElementById('p-is_featured').checked=product?product.is_featured===1:false;
+  document.getElementById('img-preview-grid').innerHTML='';
+  if(product) renderExistingImages(product.images||[]);
+  switchTab('product',0);document.getElementById('product-modal').classList.add('open');
+}
+function renderExistingImages(images){
+  document.getElementById('img-preview-grid').innerHTML=images.map(function(img){
+    return '<div class="img-card" data-img-id="'+esc(img.id)+'"><img src="'+esc(img.url)+'" alt="">'+(img.is_primary?'<div class="primary-badge">primary</div>':'')+'<div class="img-order-num">#'+img.order+'</div><div class="img-actions">'+(img.is_primary?'':'<button class="btn btn-ghost btn-sm" onclick="setPrimaryImage(\''+esc(img.id)+'\')">Set Primary</button>')+'<button class="btn btn-danger btn-sm" onclick="deleteExistingImage(\''+esc(img.id)+'\')">Del</button></div></div>';
+  }).join('');
+}
+async function editProduct(id){try{var p=await api('/api/products/'+id);openProductModal(p)}catch(e){toast('Load failed: '+e.message,'err')}}
+async function deleteProduct(id,name){
+  if(!confirm('Delete "'+name+'"?')) return;
+  try{await api('/api/products/'+id,'DELETE');toast('Deleted: '+name);loadProducts()}catch(e){toast('Delete failed: '+e.message,'err')}
+}
+async function saveProduct(){
+  var name=document.getElementById('p-name').value.trim();
+  if(!name){toast('Name is required','err');return}
+  var data={name:name,sku:v('p-sku'),description:v('p-description'),category:v('p-category'),subcategory:v('p-subcategory'),tags:v('p-tags'),
+    price:parseFloat(v('p-price'))||0,currency:v('p-currency')||'IQD',price_per_pack:parseFloat(v('p-price_per_pack'))||0,
+    qty_per_pack:parseInt(v('p-qty_per_pack'))||0,stock:parseInt(v('p-stock'))||0,low_stock_threshold:parseInt(v('p-low_stock_threshold'))||10,
+    weight_kg:parseFloat(v('p-weight_kg'))||0,dimensions:v('p-dimensions'),
+    is_active:document.getElementById('p-is_active').checked,is_featured:document.getElementById('p-is_featured').checked,
+    aliases_en:v('p-aliases_en'),aliases_ar:v('p-aliases_ar'),aliases_ku:v('p-aliases_ku'),
+    uses_en:v('p-uses_en'),uses_ar:v('p-uses_ar'),uses_ku:v('p-uses_ku')};
+  try{
+    var pid=editingProductId;
+    if(pid){await api('/api/products/'+pid,'PUT',data)}
+    else{var res=await api('/api/products','POST',data);pid=res.id}
+    if(pendingProductImages.length){
+      var fd=new FormData();
+      pendingProductImages.forEach(function(pi){fd.append('images',pi.file)});
+      await fetch('/api/products/images/'+pid,{method:'POST',body:fd});
+    }
+    toast(editingProductId?'Product updated':'Product created');closeModal('product-modal');loadProducts();
+  }catch(e){toast('Save failed: '+e.message,'err')}
+}
+function handleImgFileSelect(e){addPendingImages(Array.from(e.target.files));e.target.value=''}
+function handleImgDrop(e){
+  e.preventDefault();e.stopPropagation();
+  document.getElementById('img-drop-zone').classList.remove('drag-over');
+  addPendingImages(Array.from(e.dataTransfer.files).filter(function(f){return f.type.startsWith('image/')}));
+}
+function addPendingImages(files){files.forEach(function(file){pendingProductImages.push({file:file,previewURL:URL.createObjectURL(file)})});renderPendingImages()}
+function renderPendingImages(){
+  var grid=document.getElementById('img-preview-grid');
+  var existingCount=grid.querySelectorAll('[data-img-id]').length;
+  Array.from(grid.children).forEach(function(el){if(!el.dataset.imgId) el.remove()});
+  pendingProductImages.forEach(function(pi,i){
+    var card=document.createElement('div');card.className='img-card';card.dataset.pending=i;
+    var idx=existingCount+i;
+    card.innerHTML='<img src="'+pi.previewURL+'" alt="">'+(idx===0?'<div class="primary-badge">primary</div>':'')+'<div class="img-order-num">#'+(idx+1)+'</div><div class="img-actions"><button class="btn btn-danger btn-sm" onclick="removePendingImage('+i+')">Del</button></div>';
+    grid.appendChild(card);
+  });
+}
+function removePendingImage(i){pendingProductImages.splice(i,1);renderPendingImages()}
+async function setPrimaryImage(imgId){
+  try{await fetch('/api/products/images/'+editingProductId+'/'+imgId+'/primary',{method:'PATCH'});var p=await api('/api/products/'+editingProductId);renderExistingImages(p.images||[])}
+  catch(e){toast('Error: '+e.message,'err')}
+}
+async function deleteExistingImage(imgId){
+  if(!confirm('Delete this image?')) return;
+  try{await api('/api/products/images/'+editingProductId+'/'+imgId,'DELETE');var p=await api('/api/products/'+editingProductId);renderExistingImages(p.images||[])}
+  catch(e){toast('Error: '+e.message,'err')}
+}
+
+var allPosts=[];
+async function loadScheduledPosts(){
+  try{allPosts=await api('/api/scheduled-posts');renderPostList();document.getElementById('post-count').textContent=allPosts.length+' posts'}
+  catch(e){document.getElementById('post-list').innerHTML='<div class="empty-state">'+esc(e.message)+'</div>'}
+}
+function renderPostList(){
+  var el=document.getElementById('post-list');
+  if(!allPosts.length){el.innerHTML='<div class="empty-state">No scheduled posts yet.</div>';return}
+  el.innerHTML=allPosts.map(function(p){
+    var plats=(p.platforms||[]).filter(function(pp){return pp.enabled});
+    var statusColors={pending:'pill-amber',scheduled:'pill-blue',posted:'pill-green',failed:'pill-red'};
+    var sCls=statusColors[p.status]||'pill-gray';
+    return '<div class="post-row">'
+      +'<div class="post-row-order">'+p.order+'</div>'
+      +'<div class="post-row-info"><div class="post-row-title">'+esc(p.title||'Untitled')+'</div>'
+      +'<div class="post-row-meta"><span class="pill '+sCls+'">'+esc(p.status||'pending')+'</span> · '+esc(p.schedule&&p.schedule.type||'manual')+' · '+plats.length+' platforms · '+(p.media||[]).length+' media</div></div>'
+      +'<div class="post-row-actions"><button class="btn btn-ghost btn-sm" onclick="editPost(\''+esc(p.id)+'\')">Edit</button><button class="btn btn-danger btn-sm" onclick="deletePost(\''+esc(p.id)+'\','+JSON.stringify(p.title||'')+')">Del</button></div>'
+      +'</div>';
+  }).join('');
+}
+function openPostModal(post){
+  editingPostId=post?post.id:null;
+  pendingPostMedia=post&&post.media?post.media.slice():[];
+  currentPostPlatforms=post&&post.platforms?JSON.parse(JSON.stringify(post.platforms)):[];
+  document.getElementById('post-modal-title').textContent=post?'Edit Post':'New Post';
+  document.getElementById('so-title').value=post?post.title||'':'';
+  document.getElementById('so-description').value=post?post.description||'':'';
+  document.getElementById('so-hashtags').value=post?(post.hashtags||[]).join(', '):'';
+  document.getElementById('so-sched-type').value=post&&post.schedule?post.schedule.type||'manual':'manual';
+  document.getElementById('so-sched-datetime').value=post&&post.schedule?post.schedule.date_time||'':'';
+  document.getElementById('so-sched-interval').value=post&&post.schedule?post.schedule.interval||'':'';
+  document.getElementById('so-sched-time').value=post&&post.schedule?post.schedule.time||'':'';
+  renderPostMediaPreview();
+  api('/api/config').then(function(freshCfg){cfg=freshCfg;renderPostPlatforms()}).catch(function(){renderPostPlatforms()});
+  switchTab('post',0);document.getElementById('post-modal').classList.add('open');
+}
+function renderPostMediaPreview(){
+  document.getElementById('post-media-preview').innerHTML=pendingPostMedia.map(function(m,i){
+    var src=m.url||(m.file_path?'/media/'+m.file_path:'');
+    return '<div class="post-media-item">'+(src?'<img src="'+esc(src)+'" onerror="this.parentNode.style.background=\'var(--bg3)\'">':'<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:.68rem;color:var(--fg-dim)">'+esc(m.type)+'</div>')+'<button class="del-btn" onclick="removePostMedia('+i+')">✕</button></div>';
+  }).join('');
+}
+function renderPostPlatforms(){
+  var el=document.getElementById('post-platforms-list');
+  var platforms=Object.entries(cfg.platforms||{}).filter(function(e){return e[1].enabled});
+  if(!platforms.length){el.innerHTML='<div style="color:var(--fg-dim);font-size:.8rem;font-family:var(--mono)">No enabled platforms.</div>';return}
+  el.innerHTML=platforms.map(function(e){
+    var pname=e[0],pcfg=e[1];
+    var subs=(pcfg.subtypes||[]).filter(function(s){return s.enabled});
+    if(!subs.length){
+      var enabled=currentPostPlatforms.some(function(pp){return pp.platform_id===pname&&(pp.subtype_id===''||pp.subtype_id===undefined||pp.subtype_id===null)&&pp.enabled});
+      return '<div class="card" style="padding:10px"><div class="checkbox-row"><input type="checkbox" id="pp-'+esc(pname)+'" '+(enabled?'checked':'')+' onchange="togglePostPlatform(\''+esc(pname)+'\',\'\',this.checked)"><label for="pp-'+esc(pname)+'" style="font-weight:700">'+esc(pname)+'</label></div></div>';
+    }
+    return '<div class="card" style="padding:10px"><div style="font-weight:700;font-size:.82rem;margin-bottom:7px;color:var(--cyan)">'+esc(pname)+'</div>'
+      +subs.map(function(st){
+        var enabled=currentPostPlatforms.some(function(pp){return pp.platform_id===pname&&pp.subtype_id===st.id&&pp.enabled});
+        return '<div class="checkbox-row" style="margin-bottom:4px"><input type="checkbox" id="pp-'+esc(pname)+'-'+esc(st.id)+'" '+(enabled?'checked':'')+' onchange="togglePostPlatform(\''+esc(pname)+'\',\''+esc(st.id)+'\',this.checked)"><label for="pp-'+esc(pname)+'-'+esc(st.id)+'">'+esc(st.name)+' <span style="color:var(--fg-dim)">('+esc(st.type)+')</span></label></div>';
+      }).join('')+'</div>';
+  }).join('');
+}
+function togglePostPlatform(platformId,subtypeId,enabled){
+  var sid=subtypeId||'';
+  var idx=currentPostPlatforms.findIndex(function(pp){return pp.platform_id===platformId&&(pp.subtype_id||'')===sid});
+  if(idx>=0) currentPostPlatforms[idx].enabled=enabled;
+  else currentPostPlatforms.push({platform_id:platformId,subtype_id:sid,enabled:enabled});
+}
+async function handlePostMediaSelect(e,type){
+  var files=Array.from(e.target.files);if(!files.length) return;
+  var fd=new FormData();files.forEach(function(f){fd.append('files',f)});fd.append('type',type);
+  try{
+    var up=await fetch('/api/upload/post-media',{method:'POST',body:fd}).then(function(r){return r.json()});
+    up.forEach(function(m){pendingPostMedia.push(m)});
+    renderPostMediaPreview();
+  }catch(err){toast('Upload failed: '+err.message,'err')}
+  e.target.value='';
+}
+function removePostMedia(i){pendingPostMedia.splice(i,1);renderPostMediaPreview()}
+async function saveScheduledPost(){
+  var tags=document.getElementById('so-hashtags').value;
+  var post={
+    title:document.getElementById('so-title').value||'Untitled',
+    description:document.getElementById('so-description').value,
+    hashtags:tags.split(',').map(function(t){return t.trim()}).filter(Boolean),
+    media:pendingPostMedia.map(function(m){return{id:m.id||'',file_path:m.file_path||m.url||'',url:m.url||'',type:m.type||'image'}}),
+    platforms:currentPostPlatforms.filter(function(pp){return pp.enabled}),
+    schedule:{type:document.getElementById('so-sched-type').value,date_time:document.getElementById('so-sched-datetime').value,interval:document.getElementById('so-sched-interval').value,time:document.getElementById('so-sched-time').value}
+  };
+  try{
+    if(editingPostId){await api('/api/scheduled-posts/'+editingPostId,'PUT',post);toast('Post updated')}
+    else{await api('/api/scheduled-posts','POST',post);toast('Post created')}
+    cfg=await api('/api/config');closeModal('post-modal');loadScheduledPosts();
+  }catch(e){toast('Save failed: '+e.message,'err')}
+}
+async function editPost(id){var post=allPosts.find(function(p){return p.id===id});if(post) openPostModal(post)}
+async function deletePost(id,title){
+  if(!confirm('Delete "'+title+'"?')) return;
+  try{await api('/api/scheduled-posts/'+id,'DELETE');cfg=await api('/api/config');toast('Deleted: '+title);loadScheduledPosts()}
+  catch(e){toast('Delete failed: '+e.message,'err')}
+}
+
+function irPollJob(jobId,statusEl,logEl,progFill,pollNoteEl,onDone){
+  if(irPollingIntervals[jobId]) clearInterval(irPollingIntervals[jobId]);
+  var dots=0;
+  irPollingIntervals[jobId]=setInterval(async function(){
+    try{
+      var job=await api('/api/ir/jobs/'+jobId);
+      dots=(dots+1)%4;
+      var dotStr='.'.repeat(dots+1);
+      if(statusEl) statusEl.textContent='Running'+dotStr+' (job: '+jobId.slice(0,8)+')';
+      if(pollNoteEl){pollNoteEl.style.display='block';pollNoteEl.textContent='Job ID: '+jobId+' — polling every 3s'}
+      if(progFill) progFill.style.width=job.status==='done'?'100%':job.status==='failed'?'100%':'50%';
+      if(job.status==='done'||job.status==='failed'){
+        clearInterval(irPollingIntervals[jobId]);
+        delete irPollingIntervals[jobId];
+        if(logEl&&job.logs){logEl.style.display='block';logEl.textContent=job.logs}
+        if(onDone) onDone(job);
+      }
+    }catch(e){
+      clearInterval(irPollingIntervals[jobId]);
+      if(statusEl){statusEl.textContent='Poll error: '+e.message;irStatusError(statusEl)}
+    }
+  },3000);
+}
+
+function irStatusOk(el,msg){
+  el.style.display='block';el.textContent=msg;
+  el.style.background='rgba(63,185,80,.1)';el.style.borderColor='var(--green)';el.style.color='var(--green)';
+}
+function irStatusError(el,msg){
+  if(msg) el.textContent=msg;
+  el.style.display='block';
+  el.style.background='rgba(248,81,73,.07)';el.style.borderColor='var(--red)';el.style.color='var(--red)';
+}
+function irStatusRunning(el){
+  el.style.display='block';el.textContent='Starting…';
+  el.style.background='rgba(86,212,221,.07)';el.style.borderColor='var(--cyan-dim)';el.style.color='var(--cyan)';
+}
+
+function switchIRTab(idx){
+  document.querySelectorAll('#page-ir .tab-btn').forEach(function(b,i){b.classList.toggle('active',i===idx)});
+  document.querySelectorAll('#page-ir .tab-pane').forEach(function(p,i){p.classList.toggle('active',i===idx)});
+  if(idx===0||idx===5) loadIRModels(false);
+  if(idx===6) fillIRSettings();
+}
+
+async function loadIRModels(force){
+  var now=Date.now();
+  if(!force&&irModelsCache&&(now-irModelsCacheTime)<15000){renderIRModels(irModelsCache);return;}
+  try{
+    var data=await api('/api/ir/models');
+    irModelsCache=data;irModelsCacheTime=Date.now();
+    renderIRModels(data);
+  }catch(e){toast('Failed to load models: '+e.message,'err')}
+}
+
+function renderIRModels(data){
+  var models=data.models||[];
+  var statsEl=document.getElementById('ir-overview-stats');
+  if(statsEl){
+    statsEl.innerHTML='<div class="stat-card"><div class="stat-label">Models Found</div><div class="stat-val">'+models.length+'</div><div class="stat-sub">in models dir</div></div>'
+      +'<div class="stat-card"><div class="stat-val" style="font-size:.8rem;word-break:break-all">'+esc(data.models_dir||'--')+'</div><div class="stat-sub">models directory</div></div>';
+  }
+  var ovEl=document.getElementById('ir-model-overview-list');
+  if(ovEl){
+    ovEl.innerHTML=models.length?models.map(function(m){
+      return '<div class="post-row"><div class="post-row-info"><div class="post-row-title">'+esc(m.name)+'</div><div class="post-row-meta">'+esc(m.size_mb)+' MB · modified '+esc(m.modified)+'</div></div>'
+        +'<div class="post-row-actions"><button class="btn btn-ghost btn-sm" onclick="irSetDefaultModel('+JSON.stringify(m.path)+')">Set Default</button></div></div>';
+    }).join(''):'<div class="empty-state">No trained models found in models directory.</div>';
+  }
+  var manEl=document.getElementById('ir-models-list');
+  if(manEl){
+    manEl.innerHTML=models.length?'<div class="table-wrap"><table><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead><tbody>'
+      +models.map(function(m){
+        return '<tr><td style="color:var(--fg-hi);font-weight:600">'+esc(m.name)+'</td><td>'+esc(m.size_mb)+' MB</td><td>'+esc(m.modified)+'</td>'
+          +'<td><div style="display:flex;gap:4px">'
+          +'<button class="btn btn-ghost btn-sm" onclick="irSetDefaultModel('+JSON.stringify(m.path)+')">Set Default</button>'
+          +'<button class="btn btn-danger btn-sm" onclick="irDeleteModel('+JSON.stringify(m.path)+','+JSON.stringify(m.name)+')">Delete</button>'
+          +'</div></td></tr>';
+      }).join('')+'</tbody></table></div>'
+      :'<div class="empty-state">No trained models found.</div>';
+  }
+}
+
+function fillIRSettings(){
+  var ir=cfg.image_recognition||{};var td=ir.training_defaults||{};
+  document.getElementById('irs-enabled').checked=!!ir.enabled;
+  document.getElementById('irs-model-path').value=ir.model_path||'';
+  document.getElementById('irs-confidence').value=ir.confidence_threshold||0.75;
+  document.getElementById('irs-maxsize').value=ir.max_image_size_px||800;
+  document.getElementById('irs-epochs').value=td.epochs||10;
+  document.getElementById('irs-batch').value=td.batch_size||32;
+  document.getElementById('irs-angles').value=td.num_angles||8;
+  document.getElementById('irs-hybrid').checked=!!td.use_hybrid;
+  document.getElementById('irs-augment').checked=!!td.use_augmentation;
+  document.getElementById('irs-multi').checked=!!td.use_multilingual;
+  document.getElementById('irs-boost').checked=!!td.boost_accuracy;
+  document.getElementById('ir-t-epochs').value=td.epochs||30;
+  document.getElementById('ir-t-batch').value=td.batch_size||8;
+  document.getElementById('ir-t-angles').value=td.num_angles||3;
+  document.getElementById('ir-t-hybrid').checked=!!td.use_hybrid;
+  document.getElementById('ir-t-augment').checked=!!td.use_augmentation;
+  document.getElementById('ir-t-multi').checked=!!td.use_multilingual;
+  document.getElementById('ir-t-boost').checked=!!td.boost_accuracy;
+  document.getElementById('ir-prod-epochs').value=td.epochs||30;
+  document.getElementById('ir-prod-batch').value=td.batch_size||8;
+  if(cfg.paths&&cfg.paths.training_images){
+    document.getElementById('ir-train-data-dir').value=cfg.paths.training_images;
+    document.getElementById('ir-multi-data-dir').value=cfg.paths.training_images;
+  }
+}
+
+function patchIRSettings(){
+  if(!cfg.image_recognition) cfg.image_recognition={training_defaults:{}};
+  if(!cfg.image_recognition.training_defaults) cfg.image_recognition.training_defaults={};
+  var ir=cfg.image_recognition;var td=ir.training_defaults;
+  ir.enabled=document.getElementById('irs-enabled').checked;
+  ir.model_path=document.getElementById('irs-model-path').value;
+  ir.confidence_threshold=parseFloat(document.getElementById('irs-confidence').value)||0.75;
+  ir.max_image_size_px=parseInt(document.getElementById('irs-maxsize').value)||800;
+  td.epochs=parseInt(document.getElementById('irs-epochs').value)||10;
+  td.batch_size=parseInt(document.getElementById('irs-batch').value)||32;
+  td.num_angles=parseInt(document.getElementById('irs-angles').value)||8;
+  td.use_hybrid=document.getElementById('irs-hybrid').checked;
+  td.use_augmentation=document.getElementById('irs-augment').checked;
+  td.use_multilingual=document.getElementById('irs-multi').checked;
+  td.boost_accuracy=document.getElementById('irs-boost').checked;
+  document.getElementById('ir-t-epochs').value=td.epochs;
+  document.getElementById('ir-t-batch').value=td.batch_size;
+  document.getElementById('ir-t-angles').value=td.num_angles;
+  document.getElementById('ir-t-hybrid').checked=td.use_hybrid;
+  document.getElementById('ir-t-augment').checked=td.use_augmentation;
+  document.getElementById('ir-t-multi').checked=td.use_multilingual;
+  document.getElementById('ir-t-boost').checked=td.boost_accuracy;
+  markUnsaved();
+}
+
+function irSetDefaultModel(path){
+  if(!cfg.image_recognition) cfg.image_recognition={training_defaults:{}};
+  cfg.image_recognition.model_path=path;
+  document.getElementById('irs-model-path').value=path;
+  markUnsaved();toast('Default model set: '+path.split(/[/\\]/).pop());
+}
+
+async function irDeleteModel(path,name){
+  if(!confirm('Delete model "'+name+'"? This cannot be undone.')) return;
+  try{
+    await api('/api/ir/models/'+encodeURIComponent(path),'DELETE');
+    toast('Deleted: '+name);irModelsCache=null;loadIRModels(true);
+  }catch(e){toast('Delete failed: '+e.message,'err')}
+}
+
+async function irBrowse(targetId,type){
+  try{
+    var data=await api('/api/ir/browse?type='+type);
+    if(data.path) document.getElementById(targetId).value=data.path;
+  }catch(e){toast('Browse not available on this system — enter path manually','err')}
+}
+
+async function irStartTrain(){
+  var dataDir=document.getElementById('ir-train-data-dir').value.trim();
+  var modelName=document.getElementById('ir-train-model-name').value.trim();
+  if(!dataDir){toast('Training images directory is required','err');return}
+  if(!modelName){toast('Model name is required','err');return}
+  var statusEl=document.getElementById('ir-train-status');
+  var logEl=document.getElementById('ir-train-log');
+  var progWrap=document.getElementById('ir-train-progress-wrap');
+  var progFill=document.getElementById('ir-train-progress-fill');
+  var pollNote=document.getElementById('ir-train-poll-note');
+  irStatusRunning(statusEl);
+  logEl.style.display='none';logEl.textContent='';
+  progWrap.style.display='block';progFill.style.width='5%';
+  try{
+    var res=await api('/api/ir/train','POST',{
+      data_dir:dataDir,model_name:modelName,
+      models_dir:document.getElementById('ir-train-models-dir').value.trim()||'',
+      epochs:parseInt(document.getElementById('ir-t-epochs').value)||30,
+      batch_size:parseInt(document.getElementById('ir-t-batch').value)||8,
+      num_angles:parseInt(document.getElementById('ir-t-angles').value)||3,
+      use_hybrid:document.getElementById('ir-t-hybrid').checked,
+      use_augmentation:document.getElementById('ir-t-augment').checked,
+      use_multilingual:document.getElementById('ir-t-multi').checked,
+      boost_accuracy:document.getElementById('ir-t-boost').checked
+    });
+    if(res.job_id){
+      irPollJob(res.job_id,statusEl,logEl,progFill,pollNote,function(job){
+        if(job.status==='done'&&job.result&&job.result.success){
+          var r=job.result;
+          irStatusOk(statusEl,'Training complete! Accuracy: '+(r.accuracy?(r.accuracy*100).toFixed(1)+'%':'n/a')+' · Classes: '+(r.num_classes||'?')+' · Time: '+(r.training_time||'?'));
+          if(r.model_path) irSetDefaultModel(r.model_path);
+          irModelsCache=null;
+          toast('Training complete!');
+        }else{
+          irStatusError(statusEl,'Training failed — see logs below.');
+          toast('Training failed','err');
+        }
+      });
+    }
+  }catch(e){
+    irStatusError(statusEl,'Error: '+e.message);
+    toast('Training error: '+e.message,'err');
+  }
+}
+
+async function irStartProductionTrain(){
+  var baseModel=document.getElementById('ir-prod-base-model').value.trim();
+  var newData=document.getElementById('ir-prod-new-data').value.trim();
+  if(!baseModel){toast('Base model path is required','err');return}
+  if(!newData){toast('New data directory is required','err');return}
+  var statusEl=document.getElementById('ir-prod-status');
+  var logEl=document.getElementById('ir-prod-log');
+  var progWrap=document.getElementById('ir-prod-progress-wrap');
+  var progFill=document.getElementById('ir-prod-progress-fill');
+  var pollNote=document.getElementById('ir-prod-poll-note');
+  irStatusRunning(statusEl);
+  logEl.style.display='none';logEl.textContent='';
+  progWrap.style.display='block';progFill.style.width='5%';
+  try{
+    var res=await api('/api/ir/production-train','POST',{
+      base_model:baseModel,new_data_dir:newData,
+      output_name:document.getElementById('ir-prod-output-name').value.trim(),
+      strategy:document.getElementById('ir-prod-strategy').value,
+      epochs:parseInt(document.getElementById('ir-prod-epochs').value)||30,
+      batch_size:parseInt(document.getElementById('ir-prod-batch').value)||8,
+      use_augmentation:document.getElementById('ir-prod-augment').checked
+    });
+    if(res.job_id){
+      irPollJob(res.job_id,statusEl,logEl,progFill,pollNote,function(job){
+        if(job.status==='done'&&job.result&&job.result.success){
+          irStatusOk(statusEl,'Production training complete! Accuracy: '+(job.result.accuracy?(job.result.accuracy*100).toFixed(1)+'%':'n/a'));
+          if(job.result.model_path) irSetDefaultModel(job.result.model_path);
+          irModelsCache=null;toast('Production training complete!');
+        }else{
+          irStatusError(statusEl,'Failed — see logs.');toast('Production training failed','err');
+        }
+      });
+    }
+  }catch(e){irStatusError(statusEl,'Error: '+e.message);toast('Error: '+e.message,'err')}
+}
+
+async function irRunMultilingual(){
+  var dataDir=document.getElementById('ir-multi-data-dir').value.trim();
+  if(!dataDir){toast('Data directory is required','err');return}
+  var statusEl=document.getElementById('ir-multi-status');
+  var logEl=document.getElementById('ir-multi-log');
+  var pollNote=document.getElementById('ir-multi-poll-note');
+  irStatusRunning(statusEl);logEl.style.display='none';logEl.textContent='';
+  try{
+    var res=await api('/api/ir/multilingual','POST',{data_dir:dataDir});
+    if(res.job_id){
+      irPollJob(res.job_id,statusEl,logEl,null,pollNote,function(job){
+        if(job.status==='done'){
+          irStatusOk(statusEl,'Multilingual augmentation applied.');
+          toast('Multilingual augmentation done');
+        }else{
+          irStatusError(statusEl,''+(job.error||'Failed'));
+          toast('Failed: '+(job.error||'unknown'),'err');
+        }
+      });
+    }else if(res.success===false){
+      irStatusError(statusEl,''+(res.message||'Script not found'));
+      toast(res.message||'Script not found','err');
+    }
+  }catch(e){irStatusError(statusEl,'Error: '+e.message);toast('Error: '+e.message,'err')}
+}
+
+async function irUploadPredictImage(e){
+  var file=e.target.files[0];if(!file) return;
+  var fd=new FormData();fd.append('file',file);
+  try{
+    var r=await fetch('/api/ir/upload-image',{method:'POST',body:fd});
+    var data=await r.json();
+    if(data.path) document.getElementById('ir-pred-image-path').value=data.path;
+    toast('Image uploaded: '+data.filename);
+  }catch(err){toast('Upload failed: '+err.message,'err')}
+}
+
+async function irRunPredict(){
+  var imagePath=document.getElementById('ir-pred-image-path').value.trim();
+  if(!imagePath){toast('Upload an image or enter a path first','err');return}
+  var statusEl=document.getElementById('ir-predict-status');
+  var logEl=document.getElementById('ir-pred-log');
+  var resultsEl=document.getElementById('ir-predict-results');
+  irStatusRunning(statusEl);logEl.style.display='none';logEl.textContent='';resultsEl.innerHTML='';
+  try{
+    var result=await api('/api/ir/predict','POST',{
+      model_path:document.getElementById('ir-pred-model').value.trim()||'',
+      image_path:imagePath,
+      top_k:parseInt(document.getElementById('ir-pred-topk').value)||3,
+      use_tta:document.getElementById('ir-pred-tta').checked
+    });
+    if(result.error){irStatusError(statusEl,''+result.error);logEl.style.display='block';logEl.textContent=result.logs||'';toast('Predict error: '+result.error,'err');return}
+    if(result.success&&result.predictions&&result.predictions.length){
+      irStatusOk(statusEl,'Prediction complete'+(result.inference_time?' · '+result.inference_time:''));
+      resultsEl.innerHTML='<div class="section-label" style="margin-top:14px">Results</div>'
+        +'<div class="table-wrap"><table><thead><tr><th>Rank</th><th>Product / Class</th><th>Confidence</th><th>Product ID</th></tr></thead><tbody>'
+        +result.predictions.map(function(p,i){
+          var pct=(p.confidence*100).toFixed(1);
+          var barColor=p.confidence>0.8?'var(--green)':p.confidence>0.5?'var(--amber)':'var(--red)';
+          return '<tr'+(i===0?' style="background:rgba(86,212,221,.04)"':'')+'>'
+            +'<td style="color:var(--cyan);font-weight:700">#'+(i+1)+'</td>'
+            +'<td style="color:var(--fg-hi);font-weight:600">'+esc(p.product_name||p.class_name||'class_'+p.class_index)+'</td>'
+            +'<td><div style="display:flex;align-items:center;gap:8px"><div style="width:80px;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:'+barColor+'"></div></div><span style="color:'+barColor+';font-weight:700">'+pct+'%</span></div></td>'
+            +'<td style="color:var(--fg-dim)">'+esc(p.pid||'--')+'</td></tr>';
+        }).join('')+'</tbody></table></div>';
+      toast('Prediction done — top: '+(result.predictions[0].product_name||'class_'+result.predictions[0].class_index));
+    }else if(result.success){
+      irStatusError(statusEl,'No predictions met the confidence threshold.');
+      toast('No confident predictions','err');
+    }else{
+      irStatusError(statusEl,'Prediction failed — see logs.');toast('Prediction failed','err');
+    }
+    if(result.logs){logEl.style.display='block';logEl.textContent=result.logs}
+  }catch(e){irStatusError(statusEl,'Error: '+e.message);toast('Error: '+e.message,'err')}
+}
+
+function closeModal(id){document.getElementById(id).classList.remove('open')}
+function switchTab(prefix,idx){
+  var pane=prefix==='product'?'ptab':'sotab';
+  var barSel=prefix==='product'?'#product-modal .tab-btn':'#post-modal .tab-btn';
+  document.querySelectorAll(barSel).forEach(function(b,i){b.classList.toggle('active',i===idx)});
+  document.querySelectorAll('[id^="'+pane+'-"]').forEach(function(p){p.classList.remove('active')});
+  var target=document.getElementById(pane+'-'+idx);if(target) target.classList.add('active');
+}
+document.querySelectorAll('.modal-backdrop').forEach(function(bd){
+  bd.addEventListener('click',function(e){if(e.target===bd) closeModal(bd.id)});
+});
+
+var v=function(id){var el=document.getElementById(id);return el?el.value:''};
+var gv=function(form,name){var el=form.querySelector('[name="'+name+'"]');return el?el.value:''};
+function setVal(form,name,val){var el=form.querySelector('[name="'+name+'"]');if(el) el.value=val}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+init();
+</script>
+</body>
+</html>

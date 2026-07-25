@@ -1,0 +1,14 @@
+{
+  "platform_id": "whatsapp",
+  "subtype": "whatsapp_account_1781382518352",
+  "account_id": "+9647700398258",
+  "state": "authenticated",
+  "cookies": [],
+  "created_at": "2026-07-23T14:38:17.7792079-07:00",
+  "last_used": "2026-07-23T14:38:17.7792079-07:00",
+  "expires_at": "2026-08-22T14:38:17.7792079-07:00",
+  "metadata": {
+    "profile_id": "whatsapp_whatsapp_account_1781382518352_84611663",
+    "session_type": "whatsmeow"
+  }
+}

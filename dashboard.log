@@ -1,0 +1,2 @@
+internal\nnlp\processor.go:21:2: no required module provides package github.com/ncruces/go-sqlite; to add it:
+	go get github.com/ncruces/go-sqlite

@@ -1,0 +1,736 @@
+{
+  "meta": {
+    "detected_os": "windows",
+    "detected_arch": "amd64",
+    "detected_environment": "production",
+    "app_version": "1.0.0",
+    "installed_at": "2024-01-15T10:30:00Z",
+    "last_updated": "2026-07-23T15:08:25-07:00",
+    "database": {
+      "type": "SQLite",
+      "host": "",
+      "port": 0,
+      "username": "",
+      "password": "",
+      "database": "./data/database.db",
+      "ssl_mode": ""
+    }
+  },
+  "system": {
+    "language": "en",
+    "operation_mode": "always_on",
+    "wake_policy": {
+      "interval_minutes": 5,
+      "idle_sleep_minutes": 60
+    }
+  },
+  "ai": {
+    "provider": "local",
+    "model": "",
+    "api_key": "",
+    "base_url": "",
+    "generation": {
+      "max_tokens": 1000,
+      "temperature": 0.7,
+      "top_p": 1,
+      "presence_penalty": 0,
+      "frequency_penalty": 0
+    },
+    "instructions": {
+      "system_prompt": "",
+      "post_instructions": "",
+      "reply_instructions": "",
+      "tone": "Friendly",
+      "max_response_length": 500,
+      "scheduled_post_instructions": ""
+    }
+  },
+  "scheduler": {
+    "timezone": "UTC",
+    "quiet_hours": {
+      "enabled": false,
+      "from": "22:00",
+      "to": "08:00"
+    },
+    "rate_limits": {
+      "messages_per_minute": 30,
+      "posts_per_hour": 4,
+      "posts_per_day": 20
+    },
+    "check_interval_minutes": 5
+  },
+  "store": {
+    "name": "Kamran",
+    "description": "xxx",
+    "hello_message": "xx",
+    "address": "suli",
+    "contact": {
+      "email": "fluctuations.me@gmail.com",
+      "phone": "07700398258"
+    },
+    "business_hours": {},
+    "currency": "IQD"
+  },
+  "platforms": {
+    "facebook": {
+      "enabled": false,
+      "platform": {
+        "type": "facebook",
+        "subtype": "account"
+      },
+      "subtypes": [
+        {
+          "id": "facebook_account_1782943243240",
+          "name": "face",
+          "type": "account",
+          "enabled": true,
+          "auth": {
+            "acct_email": "fluctuations.me@gmail.com",
+            "acct_password": "Rawa@124"
+          },
+          "metadata": {
+            "image_recognition": false
+          },
+          "limits": {
+            "daily_messages": 200,
+            "daily_posts": 5,
+            "daily_hearts": 100,
+            "daily_follows": 50,
+            "daily_comments": 50,
+            "hourly_posts": 2
+          },
+          "automation": {
+            "auto_reply": {
+              "enabled": true
+            },
+            "auto_heart": {
+              "enabled": false,
+              "delay_min": 0,
+              "delay_max": 0,
+              "max_per_day": 0,
+              "skip_own": false,
+              "skip_private": false
+            },
+            "auto_follow": {
+              "enabled": false,
+              "max_per_day": 0,
+              "target_hashtags": null,
+              "target_accounts": null,
+              "unfollow_after": 0
+            },
+            "auto_repost": {
+              "enabled": false,
+              "source_tags": null,
+              "credit_source": false,
+              "max_per_day": 0
+            },
+            "answer_dm": {
+              "enabled": true,
+              "include_groups": false
+            },
+            "answer_comments": {
+              "enabled": false
+            },
+            "welcome_message": {
+              "enabled": false,
+              "text": ""
+            },
+            "filters": {
+              "ignore_words": null,
+              "min_word_count": 0,
+              "reply_delay": 0,
+              "language": "",
+              "block_keywords": null,
+              "allow_keywords": null,
+              "min_char_count": 0
+            }
+          },
+          "posting": {
+            "random": {
+              "enabled": false,
+              "interval_hours": {
+                "min": 4,
+                "max": 12
+              },
+              "posts_per_cycle": 1,
+              "use_global": true
+            },
+            "manual": {
+              "enabled": false,
+              "payload": {
+                "title": "",
+                "description": "",
+                "media": {
+                  "type": "",
+                  "url": ""
+                }
+              }
+            },
+            "schedule_times": null
+          }
+        }
+      ],
+      "automation": {
+        "auto_reply": {
+          "enabled": false
+        },
+        "auto_heart": {
+          "enabled": false,
+          "delay_min": 0,
+          "delay_max": 0,
+          "max_per_day": 0,
+          "skip_own": false,
+          "skip_private": false
+        },
+        "auto_follow": {
+          "enabled": false,
+          "max_per_day": 0,
+          "target_hashtags": null,
+          "target_accounts": null,
+          "unfollow_after": 0
+        },
+        "auto_repost": {
+          "enabled": false,
+          "source_tags": null,
+          "credit_source": false,
+          "max_per_day": 0
+        },
+        "answer_dm": {
+          "enabled": false,
+          "include_groups": false
+        },
+        "answer_comments": {
+          "enabled": false
+        },
+        "welcome_message": {
+          "enabled": false,
+          "text": ""
+        },
+        "filters": {
+          "ignore_words": null,
+          "min_word_count": 0,
+          "reply_delay": 0,
+          "language": "",
+          "block_keywords": null,
+          "allow_keywords": null,
+          "min_char_count": 0
+        }
+      },
+      "posting": {
+        "random": {
+          "enabled": false,
+          "interval_hours": {
+            "min": 0,
+            "max": 0
+          },
+          "posts_per_cycle": 0,
+          "use_global": false
+        },
+        "manual": {
+          "enabled": false,
+          "payload": {
+            "title": "",
+            "description": "",
+            "media": {
+              "type": "",
+              "url": ""
+            }
+          }
+        },
+        "schedule_times": null
+      },
+      "limits": {
+        "daily_messages": 200,
+        "daily_posts": 5,
+        "daily_hearts": 100,
+        "daily_follows": 50,
+        "daily_comments": 50,
+        "hourly_posts": 2
+      },
+      "metadata": {
+        "created_at": "",
+        "last_active": "",
+        "notes": "",
+        "total_posts": 0,
+        "total_followers": 0,
+        "total_following": 0
+      },
+      "settings": {
+        "post_hashtags": null,
+        "mention_accounts": null,
+        "allowed_post_types": null,
+        "max_post_length": 0,
+        "max_image_size_mb": 0,
+        "max_video_size_mb": 0,
+        "allowed_media_types": null
+      },
+      "messages": {
+        "greetings": null,
+        "farewells": null,
+        "questions": null,
+        "answers": null,
+        "keywords": null,
+        "fallback": null
+      }
+    },
+    "telegram": {
+      "enabled": true,
+      "platform": {
+        "type": "telegram",
+        "subtype": "account"
+      },
+      "subtypes": [
+        {
+          "id": "telegram_account_1781562000496",
+          "name": "tg rawa",
+          "type": "account",
+          "enabled": true,
+          "auth": {
+            "api_hash": "48d1d0f1782ff36964f6506038b1d774",
+            "api_id": "27271930",
+            "password": "itsshizotime@117",
+            "phone_number": "+9647700398258"
+          },
+          "metadata": {
+            "image_recognition": false
+          },
+          "limits": {
+            "daily_messages": 0,
+            "daily_posts": 0,
+            "daily_hearts": 0,
+            "daily_follows": 0,
+            "daily_comments": 0,
+            "hourly_posts": 0
+          },
+          "automation": {
+            "auto_reply": {
+              "enabled": false
+            },
+            "auto_heart": {
+              "enabled": false,
+              "delay_min": 0,
+              "delay_max": 0,
+              "max_per_day": 0,
+              "skip_own": false,
+              "skip_private": false
+            },
+            "auto_follow": {
+              "enabled": false,
+              "max_per_day": 0,
+              "target_hashtags": null,
+              "target_accounts": null,
+              "unfollow_after": 0
+            },
+            "auto_repost": {
+              "enabled": false,
+              "source_tags": null,
+              "credit_source": false,
+              "max_per_day": 0
+            },
+            "answer_dm": {
+              "enabled": false,
+              "include_groups": false
+            },
+            "answer_comments": {
+              "enabled": false
+            },
+            "welcome_message": {
+              "enabled": false,
+              "text": ""
+            },
+            "filters": {
+              "ignore_words": null,
+              "min_word_count": 0,
+              "reply_delay": 0,
+              "language": "",
+              "block_keywords": null,
+              "allow_keywords": null,
+              "min_char_count": 0
+            }
+          },
+          "posting": {
+            "random": {
+              "enabled": false,
+              "interval_hours": {
+                "min": 0,
+                "max": 0
+              },
+              "posts_per_cycle": 0,
+              "use_global": false
+            },
+            "manual": {
+              "enabled": false,
+              "payload": {
+                "title": "",
+                "description": "",
+                "media": {
+                  "type": "",
+                  "url": ""
+                }
+              }
+            },
+            "schedule_times": null
+          }
+        }
+      ],
+      "automation": {
+        "auto_reply": {
+          "enabled": true
+        },
+        "auto_heart": {
+          "enabled": false,
+          "delay_min": 0,
+          "delay_max": 0,
+          "max_per_day": 0,
+          "skip_own": false,
+          "skip_private": false
+        },
+        "auto_follow": {
+          "enabled": false,
+          "max_per_day": 0,
+          "target_hashtags": null,
+          "target_accounts": null,
+          "unfollow_after": 0
+        },
+        "auto_repost": {
+          "enabled": false,
+          "source_tags": null,
+          "credit_source": false,
+          "max_per_day": 0
+        },
+        "answer_dm": {
+          "enabled": true,
+          "include_groups": false
+        },
+        "answer_comments": {
+          "enabled": false
+        },
+        "welcome_message": {
+          "enabled": false,
+          "text": ""
+        },
+        "filters": {
+          "ignore_words": null,
+          "min_word_count": 0,
+          "reply_delay": 0,
+          "language": "",
+          "block_keywords": null,
+          "allow_keywords": null,
+          "min_char_count": 0
+        }
+      },
+      "posting": {
+        "random": {
+          "enabled": false,
+          "interval_hours": {
+            "min": 0,
+            "max": 0
+          },
+          "posts_per_cycle": 0,
+          "use_global": false
+        },
+        "manual": {
+          "enabled": false,
+          "payload": {
+            "title": "",
+            "description": "",
+            "media": {
+              "type": "",
+              "url": ""
+            }
+          }
+        },
+        "schedule_times": null
+      },
+      "limits": {
+        "daily_messages": 0,
+        "daily_posts": 5,
+        "daily_hearts": 100,
+        "daily_follows": 50,
+        "daily_comments": 50,
+        "hourly_posts": 2
+      },
+      "metadata": {
+        "created_at": "",
+        "last_active": "2026-07-23T15:06:09-07:00",
+        "notes": "",
+        "total_posts": 0,
+        "total_followers": 0,
+        "total_following": 0
+      },
+      "settings": {
+        "post_hashtags": null,
+        "mention_accounts": null,
+        "allowed_post_types": null,
+        "max_post_length": 0,
+        "max_image_size_mb": 0,
+        "max_video_size_mb": 0,
+        "allowed_media_types": null
+      },
+      "messages": {
+        "greetings": null,
+        "farewells": null,
+        "questions": null,
+        "answers": null,
+        "keywords": null,
+        "fallback": null
+      }
+    },
+    "whatsapp": {
+      "enabled": true,
+      "platform": {
+        "type": "whatsapp",
+        "subtype": "account"
+      },
+      "subtypes": [
+        {
+          "id": "whatsapp_account_1781382518352",
+          "name": "Rawa",
+          "type": "account",
+          "enabled": true,
+          "auth": {
+            "password": "itsshizotime@117",
+            "phone": "+9647700398258",
+            "two_fa_key": "itsshizotime@117"
+          },
+          "metadata": {
+            "image_recognition": false
+          },
+          "limits": {
+            "daily_messages": 50,
+            "daily_posts": 5,
+            "daily_hearts": 100,
+            "daily_follows": 50,
+            "daily_comments": 1,
+            "hourly_posts": 2
+          },
+          "automation": {
+            "auto_reply": {
+              "enabled": true
+            },
+            "auto_heart": {
+              "enabled": false,
+              "delay_min": 0,
+              "delay_max": 0,
+              "max_per_day": 0,
+              "skip_own": false,
+              "skip_private": false
+            },
+            "auto_follow": {
+              "enabled": false,
+              "max_per_day": 0,
+              "target_hashtags": null,
+              "target_accounts": null,
+              "unfollow_after": 0
+            },
+            "auto_repost": {
+              "enabled": false,
+              "source_tags": null,
+              "credit_source": false,
+              "max_per_day": 0
+            },
+            "answer_dm": {
+              "enabled": true,
+              "include_groups": false
+            },
+            "answer_comments": {
+              "enabled": false
+            },
+            "welcome_message": {
+              "enabled": false,
+              "text": ""
+            },
+            "filters": {
+              "ignore_words": null,
+              "min_word_count": 0,
+              "reply_delay": 0,
+              "language": "",
+              "block_keywords": null,
+              "allow_keywords": null,
+              "min_char_count": 0
+            }
+          },
+          "posting": {
+            "random": {
+              "enabled": false,
+              "interval_hours": {
+                "min": 4,
+                "max": 12
+              },
+              "posts_per_cycle": 1,
+              "use_global": false
+            },
+            "manual": {
+              "enabled": false,
+              "payload": {
+                "title": "",
+                "description": "",
+                "media": {
+                  "type": "",
+                  "url": ""
+                }
+              }
+            },
+            "schedule_times": null
+          }
+        }
+      ],
+      "automation": {
+        "auto_reply": {
+          "enabled": false
+        },
+        "auto_heart": {
+          "enabled": false,
+          "delay_min": 0,
+          "delay_max": 0,
+          "max_per_day": 0,
+          "skip_own": false,
+          "skip_private": false
+        },
+        "auto_follow": {
+          "enabled": false,
+          "max_per_day": 0,
+          "target_hashtags": null,
+          "target_accounts": null,
+          "unfollow_after": 0
+        },
+        "auto_repost": {
+          "enabled": false,
+          "source_tags": null,
+          "credit_source": false,
+          "max_per_day": 0
+        },
+        "answer_dm": {
+          "enabled": true,
+          "include_groups": false
+        },
+        "answer_comments": {
+          "enabled": false
+        },
+        "welcome_message": {
+          "enabled": false,
+          "text": ""
+        },
+        "filters": {
+          "ignore_words": null,
+          "min_word_count": 0,
+          "reply_delay": 0,
+          "language": "",
+          "block_keywords": null,
+          "allow_keywords": null,
+          "min_char_count": 0
+        }
+      },
+      "posting": {
+        "random": {
+          "enabled": false,
+          "interval_hours": {
+            "min": 0,
+            "max": 0
+          },
+          "posts_per_cycle": 0,
+          "use_global": false
+        },
+        "manual": {
+          "enabled": false,
+          "payload": {
+            "title": "",
+            "description": "",
+            "media": {
+              "type": "",
+              "url": ""
+            }
+          }
+        },
+        "schedule_times": null
+      },
+      "limits": {
+        "daily_messages": 200,
+        "daily_posts": 5,
+        "daily_hearts": 100,
+        "daily_follows": 50,
+        "daily_comments": 50,
+        "hourly_posts": 2
+      },
+      "metadata": {
+        "created_at": "",
+        "last_active": "2026-07-23T14:03:40-07:00",
+        "notes": "",
+        "total_posts": 0,
+        "total_followers": 0,
+        "total_following": 0
+      },
+      "settings": {
+        "post_hashtags": null,
+        "mention_accounts": null,
+        "allowed_post_types": null,
+        "max_post_length": 0,
+        "max_image_size_mb": 0,
+        "max_video_size_mb": 0,
+        "allowed_media_types": null
+      },
+      "messages": {
+        "greetings": null,
+        "farewells": null,
+        "questions": null,
+        "answers": null,
+        "keywords": null,
+        "fallback": null
+      }
+    }
+  },
+  "posting": {
+    "fallback": {
+      "random": {
+        "enabled": false,
+        "interval_hours": {
+          "min": 4,
+          "max": 12
+        },
+        "posts_per_cycle": 1,
+        "use_global": true
+      }
+    },
+    "rotation_mode": "sequential",
+    "scheduled_posts_summary": {}
+  },
+  "paths": {
+    "logs": "./logs",
+    "config": "./internal/config",
+    "cache": "./cache",
+    "media": "./media",
+    "cnn": "./cnn",
+    "temp": "./temp",
+    "sessions": "./sessions",
+    "database": "./data/database.db",
+    "backup": "./backup",
+    "post_images": "./media/images",
+    "product_images": "./media/product_images",
+    "post_videos": "./media/videos",
+    "scheduled_posts": "./media/scheduled_posts",
+    "training_images": "./media/training_images"
+  },
+  "content": {
+    "posts": [],
+    "media": [],
+    "hashtags": [],
+    "categories": [],
+    "last_used_index": 0
+  },
+  "scheduled_posts": [],
+  "image_recognition": {
+    "enabled": false,
+    "model_path": "",
+    "confidence_threshold": 0.75,
+    "max_image_size_px": 800,
+    "training_defaults": {
+      "epochs": 10,
+      "batch_size": 32,
+      "num_angles": 8,
+      "use_hybrid": false,
+      "use_augmentation": false,
+      "use_multilingual": false,
+      "boost_accuracy": false
+    }
+  }
+}

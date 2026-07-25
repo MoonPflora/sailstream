@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandbox Debugger</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 1rem; min-height: 100vh; }
+h1 { color: #4a90d9; margin-bottom: 1rem; font-size: 1.3rem; }
+.controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+.controls input, .controls select { padding: 0.5rem; border: 1px solid #333; border-radius: 6px; background: #16213e; color: #e0e0e0; }
+.controls button { padding: 0.5rem 1.2rem; background: #4a90d9; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.controls button:hover { background: #5aa0e9; }
+.card { background: #16213e; border-radius: 10px; margin-bottom: 1rem; overflow: hidden; border: 1px solid #0f3460; }
+.card-header { padding: 0.75rem 1rem; background: #0f3460; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+.card-header:hover { background: #1a4080; }
+.card-header .user-msg { font-weight: 600; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e0e0e0; }
+.card-header .meta { color: #8892b0; font-size: 0.75rem; }
+.card-body { display: none; }
+.card-body.open { display: block; }
+.stage { border-bottom: 1px solid #0f3460; }
+.stage:last-child { border-bottom: none; }
+.stage-header { padding: 0.5rem 1rem; background: #1a1a2e; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: #a0b0d0; }
+.stage-header:hover { background: #16213e; }
+.stage-header .arrow { display: inline-block; width: 12px; transition: transform 0.2s; font-size: 0.7rem; }
+.stage-header.open .arrow { transform: rotate(90deg); }
+.stage-body { display: none; padding: 0.75rem 1rem; background: #0a0a1a; font-size: 0.8rem; }
+.stage-body.open { display: block; }
+.compiled-text { color: #50fa7b; margin-bottom: 0.5rem; font-style: italic; padding: 0.5rem; background: #0f3460; border-radius: 4px; }
+.json-toggle { display: inline-block; margin-right: 0.5rem; font-size: 0.7rem; color: #4a90d9; cursor: pointer; padding: 2px 8px; border: 1px solid #4a90d9; border-radius: 3px; }
+.json-toggle:hover { background: #4a90d9; color: white; }
+.json-data { display: none; font-family: 'Courier New', monospace; white-space: pre-wrap; background: #000; padding: 0.5rem; border-radius: 4px; margin-top: 0.3rem; font-size: 0.75rem; color: #f8f8f2; overflow-x: auto; }
+.json-data.visible { display: block; }
+.stage-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+.badge-received { background: #1b4332; color: #95d5b2; }
+.badge-nlp_result { background: #1a3a5c; color: #82aaff; }
+.badge-compiled { background: #3d2a5c; color: #c792ea; }
+.badge-compile_failed { background: #5c1a1a; color: #ff6b6b; }
+.badge-delivered { background: #2d5c1a; color: #8ce071; }
+.badge-delivery_failed { background: #5c2a1a; color: #ffaa6b; }
+.badge-raw_result { background: #2a2a5c; color: #b0b0e0; }
+</style>
+</head>
+<body>
+<h1>🔬 Sandbox Debugger</h1>
+<div class="controls">
+  <input id="text" type="text" placeholder="Type a message..." size="40" autofocus onkeydown="if(event.key==='Enter')send()">
+  <select id="platform"><option value="whatsapp">WhatsApp</option><option value="telegram">Telegram</option></select>
+  <select id="subtype"><option value="sandbox">sandbox (isolated)</option></select>
+  <input id="user" type="text" value="sandbox-user-1" placeholder="User ID" size="12">
+  <button id="sendBtn">Send</button>
+</div>
+<div id="cards"></div>
+
+<script>
+(function() {
+  "use strict";
+
+  // Known cards to avoid duplicates
+  var knownCards = {};
+
+  // Escape HTML
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(String(text)));
+    return div.innerHTML;
+  }
+
+  // Badge CSS class
+  function badgeClass(name) {
+    var map = {
+      'received': 'badge-received',
+      'nlp_result': 'badge-nlp_result',
+      'compiled': 'badge-compiled',
+      'compile_failed': 'badge-compile_failed',
+      'delivered': 'badge-delivered',
+      'delivery_failed': 'badge-delivery_failed',
+      'raw_result': 'badge-raw_result'
+    };
+    return map[name] || '';
+  }
+
+  // Create a single stage
+  function createStage(stageName, events) {
+    var stage = document.createElement('div');
+    stage.className = 'stage';
+
+    var header = document.createElement('div');
+    header.className = 'stage-header';
+    header.innerHTML = '<span class="arrow">▶</span> <span class="stage-badge ' + badgeClass(stageName) + '">' + escapeHtml(stageName) + '</span>';
+    header.addEventListener('click', function(e) {
+      e.stopPropagation();
+      header.classList.toggle('open');
+      var body = stage.querySelector('.stage-body');
+      if (body) body.classList.toggle('open');
+    });
+    stage.appendChild(header);
+
+    var body = document.createElement('div');
+    body.className = 'stage-body';
+
+    events.forEach(function(evt) {
+      var wrapper = document.createElement('div');
+      wrapper.style.marginBottom = '0.5rem';
+
+      var toggle = document.createElement('span');
+      toggle.className = 'json-toggle';
+      toggle.textContent = 'Show JSON';
+      wrapper.appendChild(toggle);
+
+      var dataDiv = document.createElement('div');
+      dataDiv.className = 'json-data';
+      try {
+        dataDiv.textContent = JSON.stringify(evt.data || evt, null, 2);
+      } catch (e) {
+        dataDiv.textContent = '[Unable to stringify]';
+      }
+      wrapper.appendChild(dataDiv);
+
+      toggle.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (dataDiv.classList.contains('visible')) {
+          dataDiv.classList.remove('visible');
+          toggle.textContent = 'Show JSON';
+        } else {
+          dataDiv.classList.add('visible');
+          toggle.textContent = 'Hide JSON';
+        }
+      });
+
+      body.appendChild(wrapper);
+    });
+
+    stage.appendChild(body);
+    return stage;
+  }
+
+  // Create compiled message stage
+  function createCompiledStage(steps) {
+    var stage = document.createElement('div');
+    stage.className = 'stage';
+
+    var header = document.createElement('div');
+    header.className = 'stage-header';
+    header.innerHTML = '<span class="arrow">▶</span> <span class="stage-badge badge-compiled">compiled_message</span>';
+    header.addEventListener('click', function(e) {
+      e.stopPropagation();
+      header.classList.toggle('open');
+      var body = stage.querySelector('.stage-body');
+      if (body) body.classList.toggle('open');
+    });
+    stage.appendChild(header);
+
+    var body = document.createElement('div');
+    body.className = 'stage-body';
+
+    var div = document.createElement('div');
+    div.className = 'compiled-text';
+    div.textContent = steps.map(function(s) {
+      return s.Value || '(' + s.Type + ': ' + s.Description + ')';
+    }).join(' | ');
+    body.appendChild(div);
+
+    stage.appendChild(body);
+    return stage;
+  }
+
+  // Render records
+  function render(records) {
+    var container = document.getElementById('cards');
+    if (!container) return;
+
+    records.forEach(function(rec) {
+      var instr = rec.instruction;
+      var raw = rec.raw_result;
+      var notifID = instr.NotificationID;
+
+      if (knownCards[notifID]) return;
+      knownCards[notifID] = true;
+
+      // Create card
+      var card = document.createElement('div');
+      card.className = 'card';
+
+      // Header
+      var header = document.createElement('div');
+      header.className = 'card-header';
+      var msgText = instr.OriginalText || (raw && raw.raw_text) || instr.Action || '';
+      header.innerHTML = '<span class="user-msg">' + escapeHtml(msgText) + '</span>' +
+                         '<span class="meta">' + escapeHtml(instr.Platform + '/' + instr.SubtypeID) + '</span>';
+      header.addEventListener('click', function() {
+        var body = card.querySelector('.card-body');
+        body.classList.toggle('open');
+      });
+      card.appendChild(header);
+
+      // Body
+      var body = document.createElement('div');
+      body.className = 'card-body';
+      card.appendChild(body);
+
+      // Insert card at top
+      container.insertBefore(card, container.firstChild);
+
+      // Fetch trace for this notification
+      fetch('/trace?notif_id=' + encodeURIComponent(notifID))
+        .then(function(r) { return r.json(); })
+        .then(function(trace) {
+          if (!trace || trace.length === 0) {
+            body.innerHTML = '<div style="padding:1rem;color:#8892b0;">No trace events yet...</div>';
+            return;
+          }
+
+          // Sort by timestamp
+          trace.sort(function(a, b) {
+            return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+          });
+
+          // Group by stage
+          var stages = {};
+          trace.forEach(function(e) {
+            if (!stages[e.stage]) stages[e.stage] = [];
+            stages[e.stage].push(e);
+          });
+
+          var order = ['received', 'nlp_result', 'compiled', 'compile_failed', 'delivered', 'delivery_failed'];
+          order.forEach(function(stageName) {
+            if (stages[stageName]) {
+              body.appendChild(createStage(stageName, stages[stageName]));
+            }
+          });
+
+          // Add compiled message if steps exist
+          if (instr.Steps && Array.isArray(instr.Steps) && instr.Steps.length) {
+            body.appendChild(createCompiledStage(instr.Steps));
+          }
+
+          // Add raw result if present
+          if (raw && Object.keys(raw).length > 0) {
+            body.appendChild(createStage('raw_result', [{stage: 'raw_result', data: raw}]));
+          }
+
+          // Auto-open
+          body.classList.add('open');
+        })
+        .catch(function(e) {
+          console.error('Trace fetch error:', e);
+          body.innerHTML = '<div style="padding:1rem;color:#ff6b6b;">Failed to load trace: ' + e.message + '</div>';
+        });
+    });
+  }
+
+  // Poll for new replies
+  function poll() {
+    fetch('/replies')
+      .then(function(r) { return r.json(); })
+      .then(function(records) {
+        if (records && records.length > 0) {
+          render(records);
+        }
+      })
+      .catch(function(e) {
+        console.log('Poll error:', e);
+      });
+    setTimeout(poll, 800);
+  }
+
+  // Send a message
+  window.send = function() {
+    var textInput = document.getElementById('text');
+    var text = textInput.value.trim();
+    if (!text) return;
+
+    var platform = document.getElementById('platform').value;
+    var subtype = document.getElementById('subtype').value;
+    var user = document.getElementById('user').value;
+
+    fetch('/inject', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        platform: platform,
+        subtype_id: subtype,
+        user_id: user,
+        text: text
+      })
+    }).then(function() {
+      textInput.value = '';
+    }).catch(function(e) {
+      console.error('Inject error:', e);
+    });
+  };
+
+  // Bind send button
+  document.addEventListener('DOMContentLoaded', function() {
+    var btn = document.getElementById('sendBtn');
+    if (btn) {
+      btn.addEventListener('click', send);
+    }
+    // Start polling
+    poll();
+  });
+
+})();
+</script>
+</body>
+</html>

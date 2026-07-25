@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SailStream — Control Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg0:#0b0d11;--bg1:#10131a;--bg2:#161b25;--bg3:#1e2433;
+  --border:#252d3f;--border-hi:#2e3a52;
+  --cyan:#00e5ff;--cyan-dim:#007a8c;
+  --green:#00ff88;--green-dim:#005c30;
+  --amber:#ffb300;--amber-dim:#7a5200;
+  --red:#ff4444;--red-dim:#7a1515;
+  --purple:#a855f7;--purple-dim:#4a1a7a;
+  --fg:#c8d4e8;--fg-dim:#5a6a85;--fg-hi:#e8f0ff;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Syne',sans-serif;
+  --radius:6px;--sidebar:224px;
+}
+html,body{height:100%;background:var(--bg0);color:var(--fg);font-family:var(--sans);font-size:14px;overflow:hidden}
+button{font-family:var(--sans);cursor:pointer;border:none;outline:none}
+#app{display:grid;grid-template-rows:48px 1fr;grid-template-columns:var(--sidebar) 1fr;height:100vh}
+#app.disconnected{grid-template-rows:26px 48px 1fr}
+#topbar{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:0 18px;
+  background:var(--bg1);border-bottom:1px solid var(--border);z-index:10}
+#topbar .logo{font-size:16px;font-weight:800;letter-spacing:.05em;color:var(--cyan);white-space:nowrap;display:flex;align-items:center;gap:8px}
+#topbar .logo span{color:var(--fg-dim);font-weight:400}
+.logo-img{height:22px;width:22px;object-fit:contain}
+#topbar .spacer{flex:1}
+#state-badge{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;
+  font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;
+  background:var(--bg3);border:1px solid var(--border-hi)}
+#state-dot{width:7px;height:7px;border-radius:50%;background:var(--fg-dim)}
+#state-badge.disconnected{border-color:var(--red-dim);background:rgba(255,68,68,.1)}
+#state-dot.disconnected{background:var(--red);animation:pulse-red 1.2s infinite}
+@keyframes pulse-red{0%,100%{opacity:1}50%{opacity:.35}}
+#conn-banner{display:none;grid-column:1/-1;background:var(--red-dim);color:var(--red);
+  font-family:var(--mono);font-size:11px;font-weight:700;text-align:center;
+  padding:5px;letter-spacing:.05em}
+#conn-banner.show{display:block}
+#topbar .ts{font-family:var(--mono);font-size:11px;color:var(--fg-dim)}
+.top-btn{padding:5px 13px;border-radius:var(--radius);font-size:12px;font-weight:700;
+  border:1px solid var(--border-hi);background:var(--bg2);color:var(--fg);transition:all .15s}
+.top-btn:hover{background:var(--bg3);border-color:var(--cyan);color:var(--cyan)}
+.top-btn.danger:hover{border-color:var(--red);color:var(--red)}
+.top-btn.wizzard-btn{border-color:var(--purple-dim);color:var(--purple)}
+.top-btn.wizzard-btn:hover{border-color:var(--purple);background:var(--bg3)}
+.top-btn:disabled{opacity:.4;cursor:not-allowed}
+#sidebar{background:var(--bg1);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow-y:auto;padding:8px 0}
+.nav-section{padding:12px 16px 4px;font-size:10px;font-weight:700;
+  letter-spacing:.12em;color:var(--fg-dim);text-transform:uppercase}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 16px;cursor:pointer;
+  font-size:13px;font-weight:600;color:var(--fg-dim);
+  border-left:2px solid transparent;transition:all .1s;white-space:nowrap}
+.nav-item:hover{color:var(--fg-hi);background:var(--bg2)}
+.nav-item.active{color:var(--cyan);border-left-color:var(--cyan);background:rgba(0,229,255,.06)}
+.nav-badge{margin-left:auto;padding:1px 6px;border-radius:10px;
+  font-family:var(--mono);font-size:10px;font-weight:700;
+  background:var(--red-dim);color:var(--red)}
+.platform-nav{padding:4px 8px}
+.plat-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius);
+  cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--fg-dim);transition:all .1s}
+.plat-item:hover{background:var(--bg2);color:var(--fg)}
+.plat-item.active{background:var(--bg3);color:var(--fg-hi)}
+.plat-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--fg-dim)}
+.plat-dot.running{background:var(--green)}
+.plat-dot.error{background:var(--red)}
+.plat-dot.paused{background:var(--amber)}
+.plat-dot.off{background:transparent;border:1px solid var(--fg-dim)}
+.platform-card.off{opacity:.72}
+.badge.off{background:var(--bg3);color:var(--fg-dim);border:1px solid var(--border-hi)}
+.toggle-btn{padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;
+  font-family:var(--mono);cursor:pointer;border:1px solid var(--border-hi);background:var(--bg2);color:var(--fg)}
+.toggle-btn.enable{border-color:var(--green-dim);color:var(--green)}
+.toggle-btn.enable:hover{background:var(--green-dim)}
+.toggle-btn.disable{border-color:var(--red-dim);color:var(--red)}
+.toggle-btn.disable:hover{background:var(--red-dim)}
+#main{display:flex;flex-direction:column;overflow:hidden}
+.panel{display:none;flex-direction:column;height:100%;overflow:hidden}
+.panel.active{display:flex}
+.panel-header{display:flex;align-items:center;gap:10px;padding:13px 20px;
+  border-bottom:1px solid var(--border);flex-shrink:0}
+.panel-title{font-size:15px;font-weight:700;color:var(--fg-hi)}
+.panel-sub{font-size:12px;color:var(--fg-dim);margin-left:4px}
+.panel-header .spacer{flex:1}
+.scroll{overflow-y:auto;flex:1;padding:16px 20px}
+.scroll::-webkit-scrollbar{width:4px}
+.scroll::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:2px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.stat-card .label{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--fg-dim);margin-bottom:5px}
+.stat-card .value{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--fg-hi);line-height:1}
+.stat-card .sub{font-family:var(--mono);font-size:11px;color:var(--fg-dim);margin-top:3px}
+.stat-card.hi{border-color:var(--cyan-dim)}
+.stat-card.warn{border-color:var(--amber-dim)}
+.stat-card.danger{border-color:var(--red-dim)}
+.stat-card.ok{border-color:var(--green-dim)}
+.section-label{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--fg-dim);margin:16px 0 7px}
+.platform-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;margin-bottom:12px}
+.platform-card-header{display:flex;align-items:center;gap:10px;padding:11px 14px;
+  border-bottom:1px solid var(--border);background:var(--bg3)}
+.platform-card-header .name{font-weight:700;color:var(--fg-hi);font-size:13px}
+.platform-card-body{padding:11px 14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px 14px}
+.platform-card-body .kv{display:flex;justify-content:space-between;align-items:center}
+.platform-card-body .k{font-size:11px;color:var(--fg-dim)}
+.platform-card-body .v{font-family:var(--mono);font-size:12px;color:var(--fg-hi);font-weight:600}
+.plat-detail{display:flex;flex-direction:column;height:100%;overflow:hidden}
+.plat-detail-top{padding:14px 20px;flex-shrink:0;overflow-y:auto;max-height:52%}
+.plat-detail-log{flex:1;min-height:0;display:flex;flex-direction:column}
+.log-pane-header{display:flex;align-items:center;gap:8px;padding:7px 14px;
+  border-bottom:1px solid var(--border);flex-shrink:0}
+.log-pane-header .lp-label{font-size:10px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--fg-dim)}
+.log-select{background:var(--bg2);border:1px solid var(--border-hi);border-radius:4px;
+  color:var(--fg);font-family:var(--mono);font-size:11px;padding:2px 6px}
+.log-scroll{flex:1;overflow-y:auto;padding:7px 14px;font-family:var(--mono);
+  font-size:11px;line-height:1.6}
+.log-scroll::-webkit-scrollbar{width:3px}
+.log-scroll::-webkit-scrollbar-thumb{background:var(--border-hi)}
+.log-line{display:flex;gap:8px;align-items:flex-start;padding:1px 0}
+.log-line .lt{color:var(--fg-dim);flex-shrink:0;white-space:nowrap}
+.log-line .ll{flex-shrink:0;font-weight:700;width:44px;text-align:right}
+.log-line .lm{word-break:break-all;color:var(--fg)}
+.ll.INFO{color:var(--cyan-dim)}.ll.WARN{color:var(--amber)}
+.ll.ERROR{color:var(--red)}.ll.URGENT{color:var(--purple)}
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th{text-align:left;padding:7px 10px;font-size:10px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--fg-dim);
+  border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg1)}
+.data-table td{padding:7px 10px;border-bottom:1px solid var(--border);
+  font-family:var(--mono);color:var(--fg)}
+.data-table tr:hover td{background:var(--bg3)}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;
+  font-weight:700;font-family:var(--mono);letter-spacing:.05em}
+.badge.running,.badge.ok,.badge.paid,.badge.active,.badge.confirmed{background:var(--green-dim);color:var(--green)}
+.badge.paused,.badge.pending{background:var(--amber-dim);color:var(--amber)}
+.badge.stopped{background:var(--bg3);color:var(--fg-dim);border:1px solid var(--border)}
+.badge.error,.badge.critical{background:var(--red-dim);color:var(--red)}
+.badge.warning{background:var(--amber-dim);color:var(--amber)}
+.pbar-wrap{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px}
+.pbar{height:4px;border-radius:2px;flex:1;background:var(--bg3);overflow:hidden}
+.pbar-fill{height:100%;border-radius:2px;transition:width .4s}
+.pbar-fill.ok{background:var(--green)}.pbar-fill.warn{background:var(--amber)}.pbar-fill.danger{background:var(--red)}
+.alert-row{display:flex;gap:12px;align-items:flex-start;padding:9px 12px;
+  border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);margin-bottom:7px}
+.alert-row.critical{border-color:var(--red-dim);background:rgba(255,68,68,.05)}
+.alert-row .alert-type{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--red);flex-shrink:0;white-space:nowrap}
+.alert-row .alert-msg{font-size:12px;color:var(--fg);flex:1;word-break:break-word}
+.alert-row .alert-meta{font-family:var(--mono);font-size:10px;color:var(--fg-dim);flex-shrink:0;white-space:nowrap}
+.resolve-btn{padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;
+  background:var(--bg3);border:1px solid var(--border-hi);color:var(--fg-dim);cursor:pointer}
+.resolve-btn:hover{color:var(--green);border-color:var(--green-dim)}
+.cfg-section{margin-bottom:18px}
+.cfg-section h3{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--cyan);margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+.cfg-kv{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);align-items:flex-start}
+.cfg-kv:last-child{border-bottom:none}
+.cfg-k{font-size:11px;color:var(--fg-dim);min-width:200px;flex-shrink:0}
+.cfg-v{font-family:var(--mono);font-size:11px;color:var(--fg-hi);word-break:break-all}
+.cfg-v.ok{color:var(--green)}.cfg-v.warn{color:var(--amber)}.cfg-v.err{color:var(--red)}
+details.cfg-block{background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--radius);padding:8px 12px;margin-top:8px}
+details.cfg-block summary{font-size:12px;font-weight:700;cursor:pointer;
+  color:var(--cyan);user-select:none;list-style:none}
+details.cfg-block summary::before{content:'▶ ';font-size:10px}
+details.cfg-block[open] summary::before{content:'▼ '}
+details.cfg-block pre{font-family:var(--mono);font-size:10px;margin-top:8px;
+  overflow-x:auto;color:var(--fg);line-height:1.5}
+.divider{height:1px;background:var(--border);margin:10px 0}
+.empty{text-align:center;padding:36px;color:var(--fg-dim);font-size:12px}
+
+.db-table-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;margin-bottom:16px}
+.db-table-btn{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:4px 10px;font-size:11px;color:var(--fg);cursor:pointer;font-family:var(--mono)}
+.db-table-btn.active{border-color:var(--cyan);color:var(--cyan)}
+.db-table-btn.view-type{font-style:italic;color:var(--purple)}
+.db-view-badge{background:var(--purple-dim);color:var(--purple);padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.db-editable-badge{background:var(--green-dim);color:var(--green);padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.db-pager{display:flex;align-items:center;gap:10px;margin-top:10px;font-family:var(--mono);font-size:11px;color:var(--fg-dim)}
+.db-search-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.db-search-bar input{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--fg);padding:5px 10px;font-family:var(--mono);font-size:11px;flex:1;max-width:250px}
+.clickable-cell{cursor:pointer;transition:background 0.1s}
+.clickable-cell:hover{background:var(--bg3) !important;text-decoration:underline;text-decoration-color:var(--cyan)}
+
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1000;display:none;justify-content:center;align-items:center;backdrop-filter:blur(3px)}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--bg1);border:1px solid var(--border-hi);border-radius:8px;width:min(800px,94vw);
+  max-height:92vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,.5)}
+.modal-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.modal-header h2{font-size:14px;font-weight:700;flex:1;color:var(--fg-hi)}
+.modal-body{padding:18px;flex:1;overflow-y:auto}
+.modal-footer{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.modal .form-group{margin-bottom:12px}
+.modal .form-group label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-dim);display:block;margin-bottom:4px}
+.modal .form-group input,.modal .form-group select,.modal .form-group textarea{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:4px;
+  color:var(--fg);font-family:var(--mono);font-size:11px;padding:6px 8px}
+.modal .ro-show{background:var(--bg0);color:var(--fg-dim);cursor:not-allowed}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:var(--radius);
+  font-size:11px;font-weight:700;cursor:pointer;transition:all .15s}
+.btn-primary{background:var(--cyan);color:var(--bg0);border:none}
+.btn-primary:hover{background:#3dc9d6}
+.btn-ghost{background:var(--bg2);border:1px solid var(--border-hi);color:var(--fg)}
+.btn-ghost:hover{background:var(--bg3);border-color:var(--cyan)}
+.btn-danger{background:transparent;border:1px solid var(--red-dim);color:var(--red)}
+.btn-danger:hover{background:var(--red-dim)}
+.btn-sm{padding:3px 8px;font-size:10px}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="conn-banner">Connection to SailStream backend lost — showing last known state, not live</div>
+<header id="topbar">
+  <div class="logo"><img src="logo.png" alt="" class="logo-img">Sail<span>Stream</span></div>
+  <div id="state-badge"><div id="state-dot"></div><span id="state-text">—</span></div>
+  <span class="spacer"></span>
+  <button class="top-btn" onclick="control('pause')">Pause</button>
+  <button class="top-btn" onclick="control('resume')">Resume</button>
+  <button class="top-btn danger" onclick="control('stop_all')">Stop All</button>
+  <button class="top-btn wizzard-btn" id="wizzard-btn" onclick="launchWizzard()">Edit Config</button>
+  <div class="ts" id="clock">—</div>
+</header>
+
+<nav id="sidebar">
+  <div class="nav-section">Navigation</div>
+  <div class="nav-item active" data-panel="overview" onclick="showPanel('overview')">
+    Overview</div>
+  <div class="nav-item" data-panel="platforms" onclick="showPanel('platforms')">
+    Platforms</div>
+  <div class="nav-item" data-panel="db" onclick="showPanel('db')">
+    Database Browser</div>
+  <div class="nav-item" data-panel="urgent" onclick="showPanel('urgent')">
+    Urgent
+    <span class="nav-badge" id="urgent-badge" style="display:none">0</span></div>
+  <div class="nav-item" data-panel="orders" onclick="showPanel('orders')">
+    Orders</div>
+  <div class="nav-item" data-panel="scheduled" onclick="showPanel('scheduled')">
+    Scheduled Posts</div>
+  <div class="nav-item" data-panel="logs" onclick="showPanel('logs')">
+    System Logs</div>
+  <div class="nav-item" data-panel="config" onclick="showPanel('config')">
+    Config</div>
+  <div class="nav-section" style="margin-top:8px">Live Platforms</div>
+  <div class="platform-nav" id="platform-nav">
+    <div class="plat-item" style="color:var(--fg-dim);font-size:11px">Loading…</div>
+  </div>
+</nav>
+
+<main id="main">
+
+<div class="panel active" id="panel-overview">
+  <div class="panel-header">
+    <span class="panel-title">Overview</span>
+    <span class="panel-sub" id="ov-uptime"></span>
+  </div>
+  <div class="scroll" id="ov-scroll"></div>
+</div>
+
+<div class="panel" id="panel-platforms">
+  <div class="panel-header"><span class="panel-title">All Platforms</span></div>
+  <div class="scroll" id="plat-scroll"></div>
+</div>
+
+<div class="panel" id="panel-platform-detail">
+  <div class="panel-header">
+    <button class="top-btn" onclick="showPanel('platforms')" style="padding:3px 10px;font-size:11px">← Back</button>
+    <span class="panel-title" id="pd-title">Platform</span>
+    <span class="spacer"></span>
+    <button class="top-btn" id="pd-toggle-btn" onclick="platformToggle()">Enable</button>
+    <button class="top-btn" onclick="platformControl('start')">Start</button>
+    <button class="top-btn danger" onclick="platformControl('stop')">Stop</button>
+    <button class="top-btn" onclick="platformControl('restart')">Restart</button>
+  </div>
+  <div class="plat-detail">
+    <div class="plat-detail-top" id="pd-body"></div>
+    <div class="plat-detail-log">
+      <div class="log-pane-header">
+        <span class="lp-label">Platform Log</span>
+        <span style="flex:1"></span>
+        <button class="top-btn" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('pd-log').innerHTML=''">Clear</button>
+      </div>
+      <div class="log-scroll" id="pd-log"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-db">
+  <div class="panel-header">
+    <span class="panel-title">Database Browser</span>
+    <span class="panel-sub">All tables are read‑only in the dashboard</span>
+    <span class="spacer"></span>
+    <button class="top-btn" onclick="loadDBTables()">Refresh</button>
+  </div>
+  <div class="scroll">
+    <div class="db-table-list" id="db-table-list"><span style="color:var(--fg-dim);font-size:11px">Loading tables…</span></div>
+    <div id="db-browser-area"></div>
+  </div>
+</div>
+
+<div class="panel" id="panel-urgent">
+  <div class="panel-header">
+    <span class="panel-title">Urgent Alerts</span>
+    <span class="panel-sub" id="urg-summary"></span>
+    <span class="spacer"></span>
+    <button class="top-btn" onclick="loadUrgent()">Refresh</button>
+  </div>
+  <div class="scroll" id="urg-scroll"><div class="empty">Loading…</div></div>
+</div>
+
+<div class="panel" id="panel-orders">
+  <div class="panel-header">
+    <span class="panel-title">Orders</span>
+    <span class="panel-sub" id="ord-summary"></span>
+    <span class="spacer"></span>
+    <button class="top-btn" onclick="loadOrders()">Refresh</button>
+  </div>
+  <div class="scroll" style="padding:0">
+    <table class="data-table"><thead><tr><th>ID</th><th>User</th><th>Platform</th><th>Status</th><th>Total</th><th>Date</th></tr></thead>
+    <tbody id="ord-tbody"></tbody></table>
+  </div>
+</div>
+
+<div class="panel" id="panel-scheduled">
+  <div class="panel-header">
+    <span class="panel-title">Scheduled Posts</span>
+    <span class="panel-sub" id="sched-summary"></span>
+    <span class="spacer"></span>
+    <button class="top-btn" onclick="loadScheduledPosts()">Refresh</button>
+  </div>
+  <div class="scroll" style="padding:0">
+    <table class="data-table"><thead>
+       <tr><th>#</th><th>Title</th><th>Status</th><th>Schedule</th><th>Platforms</th><th>Media</th><th>Updated</th></tr>
+    </thead><tbody id="sched-tbody"></tbody></table>
+  </div>
+</div>
+
+<div class="panel" id="panel-logs">
+  <div class="panel-header">
+    <span class="panel-title">System Logs</span>
+    <span class="spacer"></span>
+    <select class="log-select" id="log-key-sel" onchange="switchLog(this.value)" style="padding:4px 8px;font-size:12px"></select>
+    <button class="top-btn" style="margin-left:8px" onclick="clearLog()">Clear</button>
+  </div>
+  <div class="log-scroll" id="sys-log" style="flex:1;padding:12px 20px"></div>
+</div>
+
+<div class="panel" id="panel-config">
+  <div class="panel-header"><span class="panel-title">Configuration</span>
+    <span class="spacer"></span>
+    <button class="top-btn" onclick="loadConfig()">Refresh</button>
+  </div>
+  <div class="scroll" id="cfg-scroll"><div class="empty">Loading…</div></div>
+</div>
+
+</main>
+</div>
+
+<div class="modal-backdrop" id="full-value-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="full-value-title">Full Value</h2>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('full-value-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label id="full-value-label">Column:</label>
+        <pre id="full-value-content" style="background:var(--bg0);padding:12px;border-radius:var(--radius);overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--mono);font-size:12px;margin-top:8px"></pre>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="copyToClipboard()">Copy to Clipboard</button>
+      <button class="btn btn-ghost" onclick="closeModal('full-value-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+let currentPlatformKey = null;
+let logInterval = null;
+let currentLogKey = 'system';
+let platformsData = [];
+let overviewData = {};
+let backendConnected = true;
+let pollFailStreak = 0;
+
+let dbCurrentTable = '';
+let dbCurrentPage = 0;
+let dbCurrentLimit = 50;
+let dbCurrentCols = [];
+let dbCurrentRows = [];
+let dbCurrentTotal = 0;
+let currentFullValue = '';
+
+document.addEventListener('DOMContentLoaded', () => {
+  tick();
+  setInterval(tick, 1000);
+  setInterval(poll, 3000);
+  poll();
+  checkMobile();
+  setInterval(() => {
+    if (document.getElementById('panel-logs').classList.contains('active')) loadSystemLog();
+  }, 2000);
+});
+
+function tick() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}
+
+async function poll() {
+  await Promise.all([loadOverview(), loadPlatformsData()]);
+  if (document.getElementById('panel-urgent').classList.contains('active')) loadUrgent();
+  if (document.getElementById('panel-platform-detail').classList.contains('active') && currentPlatformKey) {
+    updatePlatformDetailStats(currentPlatformKey);
+    loadPlatformLog(currentPlatformKey);
+  }
+}
+
+async function checkMobile() {
+  try {
+    const r = await fetch('/api/config');
+    const d = await r.json();
+    if (d.os === 'android' || d.os === 'ios') {
+      const btn = document.getElementById('wizzard-btn');
+      btn.disabled = true;
+      btn.title = 'wizzard is only available on desktop';
+    }
+  } catch(e) {}
+}
+
+function showPanel(name, arg) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const panel = document.getElementById('panel-' + name);
+  if (panel) panel.classList.add('active');
+  const navItem = document.querySelector('.nav-item[data-panel="' + name + '"]');
+  if (navItem) navItem.classList.add('active');
+
+  if (logInterval) { clearInterval(logInterval); logInterval = null; }
+
+  if (name === 'platform-detail' && arg) {
+    currentPlatformKey = arg;
+    document.querySelectorAll('.plat-item').forEach(el =>
+      el.classList.toggle('active', el.dataset.key === arg));
+    renderPlatformDetailFull(arg);
+    logInterval = setInterval(() => loadPlatformLog(arg), 1500);
+  } else {
+    document.querySelectorAll('.plat-item').forEach(el => el.classList.remove('active'));
+  }
+
+  if (name === 'orders') loadOrders();
+  if (name === 'config') loadConfig();
+  if (name === 'logs') loadSystemLog();
+  if (name === 'urgent') loadUrgent();
+  if (name === 'scheduled') loadScheduledPosts();
+  if (name === 'db') loadDBTables();
+}
+
+async function loadDBTables() {
+  try {
+    const r = await fetch('/api/db/tables');
+    const tables = await r.json();
+    const el = document.getElementById('db-table-list');
+    if (!tables.length) {
+      el.innerHTML = '<span style="color:var(--fg-dim);font-size:11px">No tables found</span>';
+      return;
+    }
+    el.innerHTML = tables.map(t => {
+      const cls = 'db-table-btn' + (t.type === 'view' ? ' view-type' : '');
+      const icon = '';
+      const safeName = escapeHtml(t.name).replace(/'/g, "\\'");
+      return '<button class="' + cls + '" onclick="loadDBTable(\'' + safeName + '\',0)">' + icon + escapeHtml(t.name) + '</button>';
+    }).join('');
+    if (tables.length) loadDBTable(tables[0].name, 0);
+  } catch(e) {
+    document.getElementById('db-table-list').innerHTML = '<span style="color:var(--red);font-size:11px">DB not connected</span>';
+  }
+}
+
+async function loadDBTable(tableName, offset) {
+  dbCurrentTable = tableName;
+  dbCurrentPage = offset || 0;
+  const search = document.getElementById('db-search-input') ? document.getElementById('db-search-input').value : '';
+  
+  document.querySelectorAll('.db-table-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.trim() === tableName);
+  });
+  
+  const area = document.getElementById('db-browser-area');
+  area.innerHTML = '<div style="color:var(--fg-dim);padding:12px">Loading ' + escapeHtml(tableName) + '…</div>';
+  
+  try {
+    let url = '/api/db/query?table=' + encodeURIComponent(tableName) + '&limit=' + dbCurrentLimit + '&offset=' + dbCurrentPage;
+    if (search) url += '&search=' + encodeURIComponent(search);
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    dbCurrentTotal = data.total;
+    renderDBTable(data);
+  } catch(e) {
+    area.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderDBTable(data) {
+  const area = document.getElementById('db-browser-area');
+  const cols = data.columns || [];
+  const rows = data.rows || [];
+  dbCurrentCols = cols;
+  dbCurrentRows = rows;
+  const isView = data.is_view;
+  const totalPages = Math.ceil(dbCurrentTotal / dbCurrentLimit);
+  const curPage = Math.floor(dbCurrentPage / dbCurrentLimit) + 1;
+  
+  const safeTable = escapeHtml(data.table).replace(/'/g, "\\'");
+  const currentSearchVal = document.getElementById('db-search-input') ? escapeHtml(document.getElementById('db-search-input').value).replace(/'/g, "\\'") : '';
+  
+  const badgeHtml = '<span class="db-view-badge">READ‑ONLY</span>';
+  
+  let html = '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">'
+    + '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--fg-hi)">' + escapeHtml(data.table) + '</span>'
+    + badgeHtml
+    + '<span style="color:var(--fg-dim);font-size:11px;font-family:var(--mono)">' + dbCurrentTotal + ' rows</span>'
+    + '<span style="flex:1"></span>'
+    + '<div class="db-search-bar" style="margin-bottom:0">'
+    + '<input id="db-search-input" placeholder="Search…" style="width:180px" value="' + currentSearchVal + '" onkeydown="if(event.key===\'Enter\')loadDBTable(\'' + safeTable + '\',0)">'
+    + '<button class="btn btn-ghost btn-sm" onclick="loadDBTable(\'' + safeTable + '\',0)">Search</button>'
+    + '</div>'
+    + '</div>'
+    + '<div class="table-wrap" style="overflow-x:auto">'
+    + '<table class="data-table"><thead><tr>';
+  
+  cols.forEach(c => {
+    html += '<th>' + (c.pk ? 'PK ' : '') + escapeHtml(c.name) + '</th>';
+  });
+  html += '</thead><tbody>';
+  
+  if (!rows.length) {
+    html += '<tr><td colspan="' + cols.length + '" class="empty">No rows</td></tr>';
+  }
+  
+  rows.forEach((row, rowIdx) => {
+    html += '<tr>';
+    cols.forEach((c, colIdx) => {
+      let val = row[c.name];
+      let displayValue = (val === null || val === undefined) ? 'NULL' : String(val);
+      let isLong = displayValue.length > 50;
+      let shortDisplay = isLong ? escapeHtml(displayValue.slice(0, 47)) + '…' : escapeHtml(displayValue);
+
+      html += '<td class="clickable-cell" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Click to view full value" onclick="showFullValue(' + rowIdx + ',' + colIdx + ')">' 
+        + shortDisplay 
+        + ''
+        + '</td>';
+    });
+    html += '</tr>';
+  });
+  
+  html += '</tbody></table></div>'
+    + '<div class="db-pager">'
+    + '<button class="btn btn-ghost btn-sm" onclick="loadDBTable(\'' + safeTable + '\',' + (dbCurrentPage - dbCurrentLimit) + ')" ' + (dbCurrentPage <= 0 ? 'disabled' : '') + '>← Prev</button>'
+    + '<span>Page ' + curPage + ' of ' + Math.max(1, totalPages) + '</span>'
+    + '<span class="spacer"></span>'
+    + '<button class="btn btn-ghost btn-sm" onclick="loadDBTable(\'' + safeTable + '\',' + (dbCurrentPage + dbCurrentLimit) + ')" ' + (dbCurrentPage + dbCurrentLimit >= dbCurrentTotal ? 'disabled' : '') + '>Next →</button>'
+    + '</div></div>';
+  
+  area.innerHTML = html;
+}
+
+function showFullValue(rowIdx, colIdx) {
+  const col = (dbCurrentCols || [])[colIdx];
+  const row = (dbCurrentRows || [])[rowIdx];
+  if (!col || !row) return;
+  const val = row[col.name];
+  const value = (val === null || val === undefined) ? 'NULL' : String(val);
+  document.getElementById('full-value-label').innerHTML = 'Column: <strong style="color:var(--cyan)">' + escapeHtml(col.name) + '</strong>';
+  document.getElementById('full-value-content').textContent = value;
+  document.getElementById('full-value-title').textContent = 'Full Value - ' + escapeHtml(col.name);
+  currentFullValue = value;
+  document.getElementById('full-value-modal').classList.add('open');
+}
+
+function copyToClipboard() {
+  if (currentFullValue) {
+    navigator.clipboard.writeText(currentFullValue).then(() => {
+      toast('Copied to clipboard!', 'ok');
+    }).catch(() => {
+      toast('Failed to copy', 'err');
+    });
+  }
+}
+
+async function loadOverview() {
+  try {
+    const r = await fetch('/api/overview');
+    if (!r.ok) throw new Error('bad status ' + r.status);
+    const d = await r.json();
+    overviewData = d;
+    onBackendReachable();
+    renderState(d.state);
+    renderOverview(d);
+  } catch(e) { onBackendUnreachable(); }
+}
+
+function onBackendReachable() {
+  pollFailStreak = 0;
+  if (!backendConnected) {
+    backendConnected = true;
+    document.getElementById('app').classList.remove('disconnected');
+    document.getElementById('conn-banner').classList.remove('show');
+    document.getElementById('state-badge').classList.remove('disconnected');
+    document.getElementById('state-dot').classList.remove('disconnected');
+  }
+}
+
+function onBackendUnreachable() {
+  pollFailStreak++;
+  if (pollFailStreak < 2 || !backendConnected) return;
+  backendConnected = false;
+  document.getElementById('app').classList.add('disconnected');
+  document.getElementById('conn-banner').classList.add('show');
+  const badge = document.getElementById('state-badge');
+  badge.classList.add('disconnected');
+  const dot = document.getElementById('state-dot');
+  dot.classList.add('disconnected');
+  dot.style.background = '';
+  document.getElementById('state-text').textContent = 'DISCONNECTED';
+  renderPlatformsNav(platformsData);
+  renderAllPlatforms(platformsData);
+}
+
+function renderState(state) {
+  const colors = {running:'#00ff88',paused:'#ffb300',error:'#ff4444',
+    stopped:'#5a6a85',starting:'#00e5ff',stopping:'#ffb300',
+    scheduled:'#a855f7',idle:'#5a6a85'};
+  document.getElementById('state-dot').style.background = colors[state] || '#5a6a85';
+  document.getElementById('state-text').textContent = state.toUpperCase();
+}
+
+function renderOverview(d) {
+  const {stats, db, rate_limits} = d;
+  if (!stats) return;
+  const uptime = stats.start_time ? elapsed(stats.start_time) : '—';
+  document.getElementById('ov-uptime').textContent = 'up ' + uptime;
+
+  document.getElementById('ov-scroll').innerHTML = `
+    <div class="section-label">Maestro</div>
+    <div class="grid-4">
+      <div class="stat-card hi"><div class="label">Uptime</div><div class="value">${uptime}</div></div>
+      <div class="stat-card ok"><div class="label">Platforms</div><div class="value">${stats.active_platforms}/${stats.total_platforms}</div><div class="sub">active/total</div></div>
+      <div class="stat-card hi"><div class="label">Notifications</div><div class="value">${fmt(stats.total_notifications)}</div></div>
+      <div class="stat-card ${stats.total_errors > 0 ? 'danger' : ''}"><div class="label">Errors</div><div class="value">${fmt(stats.total_errors)}</div></div>
+    </div>
+    <div class="section-label">Activity Today</div>
+    <div class="grid-4">
+      <div class="stat-card hi"><div class="label">Incoming Today</div><div class="value">${fmt(db ? db.todays_messages : 0)}</div><div class="sub">messages received</div></div>
+      <div class="stat-card ok"><div class="label">Sent Today</div><div class="value">${fmt(stats.total_sent_today || 0)}</div><div class="sub">replies/messages out</div></div>
+      <div class="stat-card"><div class="label">Posts Today</div><div class="value">${stats.posts_today || 0}</div><div class="sub">${stats.posts_this_hour || 0}/hr</div></div>
+      <div class="stat-card warn"><div class="label">Unprocessed</div><div class="value">${fmt(stats.pending_messages || 0)}</div><div class="sub">in queue</div></div>
+    </div>
+    <div class="section-label">Database</div>
+    <div class="grid-4">
+      <div class="stat-card"><div class="label">Users</div><div class="value">${fmt(db ? db.total_users : 0)}</div><div class="sub">${db ? db.active_users : 0} active</div></div>
+      <div class="stat-card"><div class="label">Orders</div><div class="value">${fmt(db ? db.total_orders : 0)}</div><div class="sub">${db ? db.todays_orders : 0} today</div></div>
+      <div class="stat-card ok"><div class="label">Revenue</div><div class="value">${(db ? db.total_revenue : 0).toFixed(0)} IQD</div><div class="sub">${(db ? db.todays_revenue : 0).toFixed(0)} today</div></div>
+      <div class="stat-card ${db && db.low_stock > 0 ? 'warn' : ''}"><div class="label">Products</div><div class="value">${db ? db.total_products : 0}</div><div class="sub">${db ? db.low_stock : 0} low stock</div></div>
+    </div>`;
+  
+  if (rate_limits && Object.keys(rate_limits).length > 0) {
+    const rlRows = Object.entries(rate_limits).map(([key, actions]) => {
+      const msgs = actions.messages || {};
+      const posts = actions.posts || {};
+      const msgPct = msgs.hourly_limit > 0 ? Math.round((msgs.current_hour_count / msgs.hourly_limit) * 100) : 0;
+      const postPct = posts.daily_limit > 0 ? Math.round((posts.current_day_count / posts.daily_limit) * 100) : 0;
+      const msgColor = msgPct >= 90 ? 'danger' : msgPct >= 70 ? 'warn' : 'ok';
+      const postColor = postPct >= 90 ? 'danger' : postPct >= 70 ? 'warn' : 'ok';
+      return `<tr>
+        <td style="padding:4px 8px;font-size:12px">${key}</td>
+        <td style="padding:4px 8px;font-size:12px;color:var(--${msgColor})">${msgs.current_hour_count||0}/${msgs.hourly_limit||'∞'} /hr &nbsp; ${msgs.current_day_count||0}/${msgs.daily_limit||'∞'} /day</td>
+        <td style="padding:4px 8px;font-size:12px;color:var(--${postColor})">${posts.current_hour_count||0}/${posts.hourly_limit||'∞'} /hr &nbsp; ${posts.current_day_count||0}/${posts.daily_limit||'∞'} /day</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('ov-scroll').innerHTML += `
+      <div class="section-label">Rate Limits</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;background:var(--bg-card);border-radius:8px">
+          <thead><tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:6px 8px;text-align:left;font-size:11px;color:var(--fg-dim)">Account</th>
+            <th style="padding:6px 8px;text-align:left;font-size:11px;color:var(--fg-dim)">Messages</th>
+            <th style="padding:6px 8px;text-align:left;font-size:11px;color:var(--fg-dim)">Posts</th>
+          </tr></thead>
+          <tbody>${rlRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  if (db && db.pending_urgent > 0) {
+    document.getElementById('urgent-badge').style.display = '';
+    document.getElementById('urgent-badge').textContent = db.pending_urgent;
+  } else {
+    document.getElementById('urgent-badge').style.display = 'none';
+  }
+}
+
+async function loadPlatformsData() {
+  try {
+    const r = await fetch('/api/platforms');
+    if (!r.ok) throw new Error('bad status ' + r.status);
+    platformsData = await r.json();
+    onBackendReachable();
+    renderPlatformsNav(platformsData);
+    if (document.getElementById('panel-platforms').classList.contains('active')) {
+      renderAllPlatforms(platformsData);
+    }
+  } catch(e) { onBackendUnreachable(); }
+}
+
+function renderPlatformsNav(platforms) {
+  const nav = document.getElementById('platform-nav');
+  if (!platforms || !platforms.length) {
+    nav.innerHTML = '<div class="plat-item" style="color:var(--fg-dim)">None configured</div>';
+    return;
+  }
+  nav.innerHTML = platforms.map(p => {
+    const key = p.platform_id + ':' + p.subtype_id;
+    const dotCls = !backendConnected ? 'off' : (!p.enabled ? 'off' : (p.is_running && !p.is_paused ? 'running' : p.is_paused ? 'paused' : p.error_count > 5 ? 'error' : ''));
+    return '<div class="plat-item' + (key === currentPlatformKey ? ' active' : '') + '" data-key="' + key + '" onclick="openPlatform(\'' + key + '\')">'
+      + '<div class="plat-dot ' + dotCls + '"></div><span>' + p.platform_id + '</span><span style="color:var(--fg-dim)">:' + p.subtype_id + '</span></div>';
+  }).join('');
+}
+
+function renderAllPlatforms(platforms) {
+  const s = document.getElementById('plat-scroll');
+  if (!platforms || !platforms.length) {
+    s.innerHTML = '<div class="empty">No platforms configured</div>';
+    return;
+  }
+  s.innerHTML = platforms.map(p => platformCard(p)).join('');
+}
+
+function platformCard(p) {
+  const state = !backendConnected ? 'off' : (!p.enabled ? 'off' : (p.is_running && !p.is_paused ? 'running' : p.is_paused ? 'paused' : 'stopped'));
+  const ds = p.daily_stats || {};
+  const key = p.platform_id + ':' + p.subtype_id;
+  const toggleBtn = !backendConnected ? '' : (p.enabled
+    ? '<button class="toggle-btn disable" onclick="event.stopPropagation();toggleSubtype(\'' + key + '\',false)">Disable</button>'
+    : '<button class="toggle-btn enable" onclick="event.stopPropagation();toggleSubtype(\'' + key + '\',true)">Enable</button>');
+  return '<div class="platform-card' + (state === 'off' ? ' off' : '') + '">'
+    + '<div class="platform-card-header" onclick="openPlatform(\'' + key + '\')" style="cursor:pointer">'
+    + '<div class="plat-dot ' + state + '"></div><span class="name">' + p.platform_id + '</span><span style="color:var(--fg-dim);font-size:11px">:' + p.subtype_id + '</span>'
+    + '<span style="flex:1"></span><span class="badge ' + state + '">' + (backendConnected ? state.toUpperCase() : 'UNKNOWN') + '</span>'
+    + '<span style="margin-left:8px">' + toggleBtn + '</span></div>'
+    + '<div class="platform-card-body">'
+    + kv('Sent Today', fmt(ds.sent_today || 0)) + kv('Received Today', fmt(ds.messages_today || 0))
+    + kv('Posts Today', ds.posts_today || 0) + kv('Errors', p.error_count || 0)
+    + kv('Hearts Today', ds.hearts_today || 0) + kv('Follows Today', ds.follows_today || 0)
+    + (p.last_error ? '<div class="kv" style="grid-column:1/-1"><span class="k">Last Error</span><span class="v" style="color:var(--red);font-size:10px">' + escapeHtml(p.last_error) + '</span></div>' : '')
+    + '</div></div>';
+}
+
+async function toggleSubtype(key, enable) {
+  const [pid, sub] = key.split(':');
+  await control(enable ? 'enable' : 'disable', pid, sub);
+  loadPlatformsData();
+}
+
+function kv(k, v) {
+  return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>';
+}
+
+function openPlatform(key) { showPanel('platform-detail', key); }
+
+function renderPlatformDetailFull(key) {
+  const p = platformsData.find(pl => pl.platform_id + ':' + pl.subtype_id === key);
+  document.getElementById('pd-title').textContent = key;
+  const body = document.getElementById('pd-body');
+  body.innerHTML = '<div class="grid-4" id="pd-stats"></div><div class="divider"></div><div id="pd-last-error"></div><div id="pd-config-section"></div>';
+  if (p) updatePlatformDetailStats(key);
+  loadPlatformConfig(key);
+  loadPlatformLog(key);
+}
+
+function updatePlatformDetailStats(key) {
+  const p = platformsData.find(pl => pl.platform_id + ':' + pl.subtype_id === key);
+  if (!p) return;
+  const ds = p.daily_stats || {};
+  const state = !backendConnected ? 'off' : (!p.enabled ? 'off' : (p.is_running && !p.is_paused ? 'running' : p.is_paused ? 'paused' : 'stopped'));
+  const toggleBtn = document.getElementById('pd-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.textContent = p.enabled ? 'Disable' : 'Enable';
+    toggleBtn.className = 'top-btn' + (p.enabled ? ' danger' : '');
+    toggleBtn.disabled = !backendConnected;
+  }
+  document.getElementById('pd-stats').innerHTML = `
+    <div class="stat-card"><div class="label">Status</div><div class="value" id="pd-status">${backendConnected ? state.toUpperCase() : 'UNKNOWN'}</div></div>
+    <div class="stat-card"><div class="label">Notifications</div><div class="value" id="pd-notifs">${fmt(p.notification_count || 0)}</div></div>
+    <div class="stat-card"><div class="label">Errors</div><div class="value" id="pd-errors">${p.error_count || 0}</div></div>
+    <div class="stat-card"><div class="label">Sent Today</div><div class="value" id="pd-sent">${fmt(ds.sent_today || 0)}</div></div>
+    <div class="stat-card"><div class="label">Received Today</div><div class="value" id="pd-received">${fmt(ds.messages_today || 0)}</div></div>
+    <div class="stat-card"><div class="label">Posts Today</div><div class="value" id="pd-posts">${ds.posts_today || 0}</div></div>
+    <div class="stat-card"><div class="label">Hearts Today</div><div class="value" id="pd-hearts">${ds.hearts_today || 0}</div></div>
+    <div class="stat-card"><div class="label">Follows Today</div><div class="value" id="pd-follows">${ds.follows_today || 0}</div></div>`;
+  const errEl = document.getElementById('pd-last-error');
+  if (errEl && p.last_error) errEl.innerHTML = '<div class="section-label">Last Error</div><div style="font-family:var(--mono);font-size:11px;color:var(--red);background:rgba(255,68,68,.07);padding:7px 10px;border-radius:4px">' + escapeHtml(p.last_error) + '</div>';
+  else if (errEl) errEl.innerHTML = '';
+}
+
+async function loadPlatformConfig(key) {
+  const [platform, subtype] = key.split(':');
+  try {
+    const r = await fetch('/api/listener_config?platform=' + encodeURIComponent(platform) + '&subtype=' + encodeURIComponent(subtype));
+    if (!r.ok) return;
+    const cfg = await r.json();
+    const sec = document.getElementById('pd-config-section');
+    if (sec) sec.innerHTML = '<div class="section-label">Listener Configuration</div>'
+      + '<details class="cfg-block"><summary>Automation</summary><pre>' + escapeHtml(JSON.stringify(cfg.automation, null, 2)) + '</pre></details>'
+      + '<details class="cfg-block"><summary>Limits</summary><pre>' + escapeHtml(JSON.stringify(cfg.limits, null, 2)) + '</pre></details>'
+      + '<details class="cfg-block"><summary>Platform Credentials</summary><pre>' + escapeHtml(JSON.stringify(cfg.platform_specific, null, 2)) + '</pre></details>';
+  } catch(e) {}
+}
+
+function platformControl(action) {
+  if (!currentPlatformKey) return;
+  const [pid, sub] = currentPlatformKey.split(':');
+  control(action, pid, sub);
+}
+
+async function platformToggle() {
+  if (!currentPlatformKey) return;
+  const p = platformsData.find(pl => pl.platform_id + ':' + pl.subtype_id === currentPlatformKey);
+  const enable = !(p && p.enabled);
+  await toggleSubtype(currentPlatformKey, enable);
+}
+
+async function loadPlatformLog(key) {
+  try {
+    const r = await fetch('/api/logs?key=' + encodeURIComponent(key) + '&n=200');
+    const d = await r.json();
+    renderLog(document.getElementById('pd-log'), d.lines);
+  } catch(e) {}
+}
+
+async function loadUrgent() {
+  try {
+    const r = await fetch('/api/urgent');
+    const items = await r.json();
+    const unresolved = items.filter(i => !i.resolved);
+    document.getElementById('urg-summary').textContent = unresolved.length + ' pending / ' + items.length + ' total';
+    const s = document.getElementById('urg-scroll');
+    if (!items.length) { s.innerHTML = '<div class="empty">No urgent alerts</div>'; return; }
+    s.innerHTML = items.map(i => '<div class="alert-row ' + (i.severity === 'critical' ? 'critical' : '') + '">'
+      + '<div><div class="alert-type">' + escapeHtml(i.alert_type) + '</div><div style="font-family:var(--mono);font-size:10px;color:var(--fg-dim)">' + escapeHtml(i.platform_id + ':' + i.subtype_id) + '</div></div>'
+      + '<div class="alert-msg">' + escapeHtml(i.message) + '</div>'
+      + '<div class="alert-meta">' + relTime(i.created_at) + '<br>' + (i.resolved ? '<span class="badge ok">RESOLVED</span>' : '<button class="resolve-btn" onclick="resolveUrgent(\'' + escapeHtml(i.id) + '\')">Resolve</button>') + '</div></div>').join('');
+  } catch(e) {}
+}
+
+async function resolveUrgent(id) {
+  await fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'resolve_urgent', parameters:{id}})});
+  loadUrgent();
+}
+
+async function loadOrders() {
+  try {
+    const r = await fetch('/api/orders');
+    const items = await r.json();
+    document.getElementById('ord-summary').textContent = items.length + ' total orders';
+    const tbody = document.getElementById('ord-tbody');
+    if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No orders</td></tr>'; return; }
+    tbody.innerHTML = items.map(o => '<tr><td>' + escapeHtml(o.id) + '</td><td>' + escapeHtml(o.user_id) + '</td><td>' + escapeHtml(o.platform) + '</td><td><span class="badge ' + o.status + '">' + o.status.toUpperCase() + '</span></td><td>' + o.total.toFixed(2) + ' IQD</td><td>' + relTime(o.created_at) + '</td></tr>').join('');
+  } catch(e) {}
+}
+
+async function loadScheduledPosts() {
+  try {
+    const r = await fetch('/api/scheduled_posts');
+    const items = await r.json();
+    document.getElementById('sched-summary').textContent = items.length + ' total posts';
+    const tbody = document.getElementById('sched-tbody');
+    if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">No scheduled posts</td></tr>'; return; }
+    tbody.innerHTML = items.map(p => '<tr><td>' + p.order + '</td><td>' + escapeHtml(p.title) + '</td><td><span class="badge ' + p.status + '">' + p.status.toUpperCase() + '</span></td><td>' + (p.schedule?.type || 'manual') + '</td><td>' + (p.platforms || []).filter(pl => pl.enabled).map(pl => pl.platform_id).join(',') + '</td><td>' + (p.media || []).length + '</td><td>' + relTime(p.updated_at) + '</td></tr>').join('');
+  } catch(e) {}
+}
+
+async function loadSystemLog() {
+  try {
+    const r = await fetch('/api/logs?key=' + encodeURIComponent(currentLogKey) + '&n=200');
+    const d = await r.json();
+    const sel = document.getElementById('log-key-sel');
+    const prev = sel.value || currentLogKey;
+    sel.innerHTML = (d.keys || ['system']).map(k => '<option value="' + k + '"' + (k === prev ? ' selected' : '') + '>' + k + '</option>').join('');
+    renderLog(document.getElementById('sys-log'), d.lines);
+  } catch(e) {}
+}
+
+function switchLog(key) { currentLogKey = key; loadSystemLog(); }
+function clearLog() { document.getElementById('sys-log').innerHTML = ''; }
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const d = await r.json();
+    document.getElementById('cfg-scroll').innerHTML = '<pre style="font-family:var(--mono);font-size:11px;overflow-x:auto">' + escapeHtml(JSON.stringify(d, null, 2)) + '</pre>';
+  } catch(e) {
+    document.getElementById('cfg-scroll').innerHTML = '<div class="empty">Failed to load config</div>';
+  }
+}
+
+async function control(action, platformId, subtypeId, params) {
+  try {
+    await fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action, platform_id:platformId||'', subtype_id:subtypeId||'', parameters:params||{}})});
+    setTimeout(poll, 300);
+  } catch(e) { console.error(e); }
+}
+
+async function launchWizzard() {
+  if (!confirm('This will stop the dashboard and open the configuration wizzard. Continue?')) return;
+  try {
+    const r = await fetch('/api/wizzard', {method:'POST'});
+    if (!r.ok) { const txt = await r.text(); alert('Could not launch wizzard:\n' + txt); return; }
+    const d = await r.json();
+    const wizzardURL = d.wizzard_url || 'http://localhost:7879';
+    document.body.innerHTML = '<div style="color:var(--fg-hi);text-align:center;padding:100px 20px;font-size:18px;font-family:var(--mono)">Launching configuration wizard…<br><span style="font-size:13px;color:var(--fg-dim)">Redirecting to ' + wizzardURL + '</span></div>';
+    waitForServerThenRedirect(wizzardURL);
+  } catch(e) { alert('Failed to launch wizzard: ' + e); }
+}
+
+function waitForServerThenRedirect(url, attempt) {
+  attempt = attempt || 0;
+  if (attempt > 40) { window.location = url; return; }
+  fetch(url, {mode:'no-cors'})
+    .then(() => { window.location = url; })
+    .catch(() => { setTimeout(() => waitForServerThenRedirect(url, attempt + 1), 300); });
+}
+
+function renderLog(el, lines) {
+  if (!el) return;
+  const wasAtBottom = el.scrollHeight - el.clientHeight <= el.scrollTop + 60;
+  el.innerHTML = (lines || []).map(l => '<div class="log-line"><span class="lt">' + new Date(l.ts).toLocaleTimeString() + '</span><span class="ll ' + l.level + '">' + l.level + '</span><span class="lm">' + escapeHtml(l.text) + '</span></div>').join('');
+  if (wasAtBottom) el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmt(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return String(n || 0);
+}
+
+function elapsed(iso) {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  return h + 'h ' + m + 'm';
+}
+
+function relTime(iso) {
+  if (!iso) return '—';
+  return elapsed(iso) + ' ago';
+}
+
+function toast(msg, type) {
+  const toastDiv = document.createElement('div');
+  toastDiv.className = 'toast toast-' + (type || 'ok');
+  toastDiv.textContent = msg;
+  toastDiv.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px;font-family:var(--mono);font-size:11px;z-index:10000';
+  document.body.appendChild(toastDiv);
+  setTimeout(() => toastDiv.remove(), 3000);
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+document.querySelectorAll('.modal-backdrop').forEach(bd => {
+  bd.addEventListener('click', e => { if (e.target === bd) closeModal(bd.id); });
+});
+</script>
+</body>
+</html>
