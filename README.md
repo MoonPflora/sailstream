@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="logo_rd.png" alt="Sailstream logo" width="220"/>
+<img src="logo_rd.png" alt="Sailstream logo" width="400"/>
 
 # Sailstream
 
