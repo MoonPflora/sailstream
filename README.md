@@ -7,6 +7,7 @@
 **A self-hosted, multi-platform social automation engine** — replies, takes orders, and posts products across WhatsApp, Facebook, Telegram, Twitter/X, and Viber.
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![Python Version](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE.md)
 [![Status](https://img.shields.io/badge/Status-Active_Development-yellow)]()
 
