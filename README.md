@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/yourusername/yourrepo/main/assets/logo.png" alt="Sailstream logo" width="600"/>
+<img src="logo_rd.png" alt="Sailstream logo" width="600"/>
 
 # Sailstream
 
