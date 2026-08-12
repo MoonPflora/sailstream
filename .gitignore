@@ -1,0 +1,19 @@
+# ----------------------------------------------------------------------
+# REVERSE IGNORE (Allowlist) – only the files/folders below get pushed
+# ----------------------------------------------------------------------
+
+# 1. Ignore EVERYTHING first
+*
+
+# 2. Un-ignore (allow) only these specific files & folders
+
+# Root-level source files
+!main.go
+!.gitignore
+!maestro_main.go
+# Core source folders
+!internal/
+!cnn/
+!database/
+!media/
+**/config.json

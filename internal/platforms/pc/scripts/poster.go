@@ -81,6 +81,32 @@ func NewPoster(env *enviroment.Environment, cfgMgr *config.ConfigManager, ch cha
 	}
 }
 
+// randomPostingEnabled reads posting_settings (falling back to the
+// platform-level row if a subtype-specific one doesn't exist) — replaces
+// the old config.json platforms.<platform>.posting.random.enabled field.
+func (p *Poster) randomPostingEnabled(platform, subtype string) bool {
+	if p.db == nil {
+		return false
+	}
+	scanRow := func(sub string) (bool, bool) {
+		var enabled int
+		err := p.db.QueryRow(`SELECT random_enabled FROM posting_settings WHERE platform=? AND subtype=?`, platform, sub).Scan(&enabled)
+		if err != nil {
+			return false, false
+		}
+		return enabled == 1, true
+	}
+	if subtype != "" {
+		if v, ok := scanRow(subtype); ok {
+			return v
+		}
+	}
+	if v, ok := scanRow(""); ok {
+		return v
+	}
+	return false
+}
+
 func (p *Poster) PostRandom() {
 	cfg := p.configManager.GetConfig()
 	product, err := p.getRandomProduct()
@@ -94,7 +120,7 @@ func (p *Poster) PostRandom() {
 	}
 	storeCfg := p.configManager.GetStore()
 	for platformID, platformCfg := range cfg.Platforms {
-		if !platformCfg.Enabled || !platformCfg.Posting.Random.Enabled {
+		if !platformCfg.Enabled || !p.randomPostingEnabled(platformID, "") {
 			continue
 		}
 		targets := p.resolveTargets(platformID, platformCfg)

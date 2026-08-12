@@ -223,6 +223,68 @@ type OrderItem struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type OrderDetail struct {
+	ID                     string            `json:"id"`
+	UserID                 string            `json:"user_id"`
+	Platform               string            `json:"platform"`
+	Status                 string            `json:"status"`
+	Total                  float64           `json:"total"`
+	Subtotal               float64           `json:"subtotal"`
+	Tax                    float64           `json:"tax"`
+	ShippingCost           float64           `json:"shipping_cost"`
+	DiscountAmount         float64           `json:"discount_amount"`
+	ShippingAddress        string            `json:"shipping_address"`
+	ShippingMethod         string            `json:"shipping_method"`
+	TrackingNumber         string            `json:"tracking_number"`
+	PaymentMethod          string            `json:"payment_method"`
+	PaymentStatus          string            `json:"payment_status"`
+	TransactionID          string            `json:"transaction_id"`
+	CustomerNotes          string            `json:"customer_notes"`
+	InternalNotes          string            `json:"internal_notes"`
+	PlatformConversationID string            `json:"platform_conversation_id"`
+	CreatedAt              time.Time         `json:"created_at"`
+	ConfirmedAt            *time.Time        `json:"confirmed_at,omitempty"`
+	ShippedAt              *time.Time        `json:"shipped_at,omitempty"`
+	DeliveredAt            *time.Time        `json:"delivered_at,omitempty"`
+	CancelledAt            *time.Time        `json:"cancelled_at,omitempty"`
+	UpdatedAt              time.Time         `json:"updated_at"`
+	Items                  []OrderItemDetail `json:"items"`
+}
+
+// ConversationMessage is a single message shown in an order's conversation
+// history. There is no messages.conversation_id / orders.platform_conversation_id
+// join available in the schema (messages has no conversation_id column at all,
+// and platform_conversation_id is never written anywhere in the codebase — see
+// handleOrderMessages for details), so this is assembled from platform_users.id
+// + a time window around the order's created_at instead.
+type ConversationMessage struct {
+	ID            string    `json:"id"`
+	Direction     string    `json:"direction"` // incoming | outgoing
+	MessageText   string    `json:"message_text"`
+	Intent        string    `json:"intent,omitempty"`
+	FinalResponse string    `json:"final_response,omitempty"`
+	ReceivedAt    time.Time `json:"received_at"`
+}
+
+type OrderItemDetail struct {
+	ID              int     `json:"id"`
+	ProductID       string  `json:"product_id"`
+	Quantity        int     `json:"quantity"`
+	UnitPrice       float64 `json:"unit_price"`
+	TotalPrice      float64 `json:"total_price"`
+	ProductName     string  `json:"product_name"`
+	ProductSKU      string  `json:"product_sku"`
+	ProductImageURL string  `json:"product_image_url"`
+}
+
+type ShippingEntry struct {
+	ID        int       `json:"id"`
+	City      string    `json:"city"`
+	Cost      float64   `json:"cost"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Server struct {
 	maestro   *maestro.Maestro
 	configMgr *config.ConfigManager
@@ -256,6 +318,11 @@ func NewServer(m *maestro.Maestro, db *sql.DB, router *logRouter, baseDir string
 	mux.HandleFunc("/api/db/tables", s.handleDBTables)
 	mux.HandleFunc("/api/db/query", s.handleDBQuery)
 	mux.HandleFunc("/api/db/row", s.handleDBRow)
+	mux.HandleFunc("/api/orders/detail/", s.handleOrderDetail)
+	mux.HandleFunc("/api/orders/update/", s.handleOrderUpdate)
+	mux.HandleFunc("/api/orders/messages/", s.handleOrderMessages)
+	mux.HandleFunc("/api/shipping", s.handleShipping)
+	mux.HandleFunc("/api/shipping/", s.handleShippingItem)
 
 	s.httpSrv = &http.Server{
 		Addr:         ":9090",
@@ -298,6 +365,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	rateLimits := s.maestro.GetRateLimitStatus()
 	dbStats := s.fetchDBStats()
 	state := string(s.maestro.GetState())
+	cfg := s.configMgr.GetConfig()
+
+	type llmConfig struct {
+		TokensPerMinute int     `json:"tokens_per_minute"`
+		CostPerMinute   float64 `json:"cost_per_minute"`
+	}
 
 	type overviewResp struct {
 		State      string                 `json:"state"`
@@ -305,13 +378,24 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		RateLimits map[string]interface{} `json:"rate_limits"`
 		DB         DBStats                `json:"db"`
 		ServerTime time.Time              `json:"server_time"`
+		LLM        llmConfig              `json:"llm"`
 	}
+
+	var llm llmConfig
+	if cfg != nil {
+		llm = llmConfig{
+			TokensPerMinute: cfg.System.LLMTokensPerMinute,
+			CostPerMinute:   cfg.System.LLMCostPerMinute,
+		}
+	}
+
 	writeJSON(w, overviewResp{
 		State:      state,
 		Stats:      stats,
 		RateLimits: rateLimits,
 		DB:         dbStats,
 		ServerTime: time.Now(),
+		LLM:        llm,
 	})
 }
 
@@ -422,6 +506,36 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, logsResp{Key: key, Keys: s.router.allKeys(), Lines: lines})
 }
 
+// getPlatformRateLimitSummary returns a representative daily_messages/
+// daily_posts/hourly_posts figure for a platform, aggregated (MAX) across
+// its rate_limits rows (one per platform+subtype+action). Replaces the old
+// config.json platforms.*.limits fields for dashboard display purposes —
+// the DB row(s) are now the only source of truth, edited via the wizard.
+func (s *Server) getPlatformRateLimitSummary(platform string) (dailyMessages, dailyPosts, hourlyPosts int) {
+	if s.db == nil {
+		return 0, 0, 0
+	}
+	s.db.QueryRow(`SELECT COALESCE(MAX(daily_limit),0) FROM rate_limits WHERE platform=? AND action='messages'`, platform).Scan(&dailyMessages)
+	s.db.QueryRow(`SELECT COALESCE(MAX(daily_limit),0) FROM rate_limits WHERE platform=? AND action='posts'`, platform).Scan(&dailyPosts)
+	s.db.QueryRow(`SELECT COALESCE(MAX(hourly_limit),0) FROM rate_limits WHERE platform=? AND action='posts'`, platform).Scan(&hourlyPosts)
+	return
+}
+
+// getRotationMode reads the global posting_settings row's rotation_mode
+// (platform='__global__', subtype=”) — replaces config.json's old
+// top-level posting.rotation_mode.
+func (s *Server) getRotationMode() string {
+	if s.db == nil {
+		return "sequential"
+	}
+	var mode string
+	err := s.db.QueryRow(`SELECT rotation_mode FROM posting_settings WHERE platform='__global__' AND subtype=''`).Scan(&mode)
+	if err != nil || mode == "" {
+		return "sequential"
+	}
+	return mode
+}
+
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.configMgr.GetConfig()
 	if cfg == nil {
@@ -435,11 +549,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		Type           string `json:"type"`
 		DailyMessages  int    `json:"daily_messages"`
 		DailyPosts     int    `json:"daily_posts"`
-		DailyHearts    int    `json:"daily_hearts"`
-		DailyFollows   int    `json:"daily_follows"`
-		DailyComments  int    `json:"daily_comments"`
 		HourlyPosts    int    `json:"hourly_posts"`
-		AutoReply      bool   `json:"auto_reply"`
 		AnswerDM       bool   `json:"answer_dm"`
 		AnswerComments bool   `json:"answer_comments"`
 		WelcomeMsg     bool   `json:"welcome_msg"`
@@ -459,76 +569,72 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type configResp struct {
-		AppVersion     string            `json:"app_version"`
-		OS             string            `json:"os"`
-		Arch           string            `json:"arch"`
-		Language       string            `json:"language"`
-		OperationMode  string            `json:"operation_mode"`
-		WakeInterval   int               `json:"wake_interval_min"`
-		IdleSleep      int               `json:"idle_sleep_min"`
-		StoreName      string            `json:"store_name"`
-		StoreEmail     string            `json:"store_email"`
-		StorePhone     string            `json:"store_phone"`
-		StoreCurrency  string            `json:"currency"`
-		BusinessHours  map[string]string `json:"business_hours"`
-		AIProvider     string            `json:"ai_provider"`
-		AIModel        string            `json:"ai_model"`
-		AIBaseURL      string            `json:"ai_base_url"`
-		AIEnabled      bool              `json:"ai_enabled"`
-		AIMaxTokens    int               `json:"ai_max_tokens"`
-		AITemperature  float64           `json:"ai_temperature"`
-		AITopP         float64           `json:"ai_top_p"`
-		AIPresence     float64           `json:"ai_presence_penalty"`
-		AIFrequency    float64           `json:"ai_frequency_penalty"`
-		AITone         string            `json:"ai_tone"`
-		AIMaxResp      int               `json:"ai_max_response_length"`
-		SysPrompt      string            `json:"system_prompt"`
-		PostInstr      string            `json:"post_instructions"`
-		ReplyInstr     string            `json:"reply_instructions"`
-		SchedPostInstr string            `json:"scheduled_post_instructions"`
-		Timezone       string            `json:"timezone"`
-		CheckInterval  int               `json:"check_interval_min"`
-		MsgPerMin      int               `json:"messages_per_minute"`
-		PostsPerHour   int               `json:"posts_per_hour"`
-		PostsPerDay    int               `json:"posts_per_day"`
-		QuietEnabled   bool              `json:"quiet_hours_enabled"`
-		QuietFrom      string            `json:"quiet_from"`
-		QuietTo        string            `json:"quiet_to"`
-		RotationMode   string            `json:"rotation_mode"`
-		Platforms      []platformInfo    `json:"platforms"`
-		IREnabled      bool              `json:"ir_enabled"`
-		IRModelPath    string            `json:"ir_model_path"`
-		IRConfidence   float64           `json:"ir_confidence"`
-		IRMaxSize      int               `json:"ir_max_size"`
-		IRTraining     irTraining        `json:"ir_training"`
-		PathMedia      string            `json:"path_media"`
-		PathPostImages string            `json:"path_post_images"`
-		PathPostVideos string            `json:"path_post_videos"`
-		PathSchedPosts string            `json:"path_scheduled_posts"`
-		PathTraining   string            `json:"path_training_images"`
-		PathProducts   string            `json:"path_product_images"`
-		PathModels     string            `json:"path_models"`
-		PathSessions   string            `json:"path_sessions"`
-		PathDatabase   string            `json:"path_database"`
-		PathLogs       string            `json:"path_logs"`
-		PathCache      string            `json:"path_cache"`
-		PathTemp       string            `json:"path_temp"`
-		PathBackup     string            `json:"path_backup"`
+		AppVersion         string            `json:"app_version"`
+		OS                 string            `json:"os"`
+		Arch               string            `json:"arch"`
+		Language           string            `json:"language"`
+		OperationMode      string            `json:"operation_mode"`
+		WakeInterval       int               `json:"wake_interval_min"`
+		IdleSleep          int               `json:"idle_sleep_min"`
+		StoreName          string            `json:"store_name"`
+		StoreEmail         string            `json:"store_email"`
+		StorePhone         string            `json:"store_phone"`
+		StoreCurrency      string            `json:"currency"`
+		BusinessHours      map[string]string `json:"business_hours"`
+		AIProvider         string            `json:"ai_provider"`
+		AIModel            string            `json:"ai_model"`
+		AIBaseURL          string            `json:"ai_base_url"`
+		AIEnabled          bool              `json:"ai_enabled"`
+		AIMaxTokens        int               `json:"ai_max_tokens"`
+		AITemperature      float64           `json:"ai_temperature"`
+		AITopP             float64           `json:"ai_top_p"`
+		AIPresence         float64           `json:"ai_presence_penalty"`
+		AIFrequency        float64           `json:"ai_frequency_penalty"`
+		AITone             string            `json:"ai_tone"`
+		AIMaxResp          int               `json:"ai_max_response_length"`
+		SysPrompt          string            `json:"system_prompt"`
+		PostInstr          string            `json:"post_instructions"`
+		ReplyInstr         string            `json:"reply_instructions"`
+		SchedPostInstr     string            `json:"scheduled_post_instructions"`
+		Timezone           string            `json:"timezone"`
+		CheckInterval      int               `json:"check_interval_min"`
+		QuietEnabled       bool              `json:"quiet_hours_enabled"`
+		QuietFrom          string            `json:"quiet_from"`
+		QuietTo            string            `json:"quiet_to"`
+		RotationMode       string            `json:"rotation_mode"`
+		Platforms          []platformInfo    `json:"platforms"`
+		IREnabled          bool              `json:"ir_enabled"`
+		IRModelPath        string            `json:"ir_model_path"`
+		IRConfidence       float64           `json:"ir_confidence"`
+		IRMaxSize          int               `json:"ir_max_size"`
+		IRTraining         irTraining        `json:"ir_training"`
+		PathMedia          string            `json:"path_media"`
+		PathPostImages     string            `json:"path_post_images"`
+		PathPostVideos     string            `json:"path_post_videos"`
+		PathSchedPosts     string            `json:"path_scheduled_posts"`
+		PathTraining       string            `json:"path_training_images"`
+		PathProducts       string            `json:"path_product_images"`
+		PathModels         string            `json:"path_models"`
+		PathSessions       string            `json:"path_sessions"`
+		PathDatabase       string            `json:"path_database"`
+		PathLogs           string            `json:"path_logs"`
+		PathCache          string            `json:"path_cache"`
+		PathTemp           string            `json:"path_temp"`
+		PathBackup         string            `json:"path_backup"`
+		LLMTokensPerMinute int               `json:"llm_tokens_per_minute"`
+		LLMCostPerMinute   float64           `json:"llm_cost_per_minute"`
 	}
 
 	var platforms []platformInfo
 	for id, p := range cfg.Platforms {
+		dailyMsgs, dailyPosts, hourlyPosts := s.getPlatformRateLimitSummary(id)
 		platforms = append(platforms, platformInfo{
 			ID:             id,
 			Enabled:        p.Enabled,
 			Type:           p.Platform.Type,
-			DailyMessages:  p.Limits.DailyMessages,
-			DailyPosts:     p.Limits.DailyPosts,
-			DailyHearts:    p.Limits.DailyHearts,
-			DailyFollows:   p.Limits.DailyFollows,
-			DailyComments:  p.Limits.DailyComments,
-			HourlyPosts:    p.Limits.HourlyPosts,
-			AutoReply:      p.Automation.AutoReply.Enabled,
+			DailyMessages:  dailyMsgs,
+			DailyPosts:     dailyPosts,
+			HourlyPosts:    hourlyPosts,
 			AnswerDM:       p.Automation.AnswerDM.Enabled,
 			AnswerComments: p.Automation.AnswerComments.Enabled,
 			WelcomeMsg:     p.Automation.WelcomeMessage.Enabled,
@@ -568,13 +674,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		SchedPostInstr: cfg.AI.Instructions.ScheduledPostInstructions,
 		Timezone:       cfg.Scheduler.Timezone,
 		CheckInterval:  cfg.Scheduler.CheckIntervalMinutes,
-		MsgPerMin:      cfg.Scheduler.RateLimits.MessagesPerMinute,
-		PostsPerHour:   cfg.Scheduler.RateLimits.PostsPerHour,
-		PostsPerDay:    cfg.Scheduler.RateLimits.PostsPerDay,
 		QuietEnabled:   cfg.Scheduler.QuietHours.Enabled,
 		QuietFrom:      cfg.Scheduler.QuietHours.From,
 		QuietTo:        cfg.Scheduler.QuietHours.To,
-		RotationMode:   cfg.Posting.RotationMode,
+		RotationMode:   s.getRotationMode(),
 		Platforms:      platforms,
 		IREnabled:      ir.Enabled,
 		IRModelPath:    ir.ModelPath,
@@ -589,19 +692,21 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			UseMultilingual: ir.TrainingDefaults.UseMultilingual,
 			BoostAccuracy:   ir.TrainingDefaults.BoostAccuracy,
 		},
-		PathMedia:      cfg.Paths.Media,
-		PathPostImages: cfg.Paths.PostImages,
-		PathPostVideos: cfg.Paths.PostVideos,
-		PathSchedPosts: cfg.Paths.ScheduledPosts,
-		PathTraining:   cfg.Paths.TrainingImages,
-		PathProducts:   cfg.Paths.ProductImages,
-		PathModels:     cfg.Paths.Models,
-		PathSessions:   cfg.Paths.Sessions,
-		PathDatabase:   cfg.Paths.Database,
-		PathLogs:       cfg.Paths.Logs,
-		PathCache:      cfg.Paths.Cache,
-		PathTemp:       cfg.Paths.Temp,
-		PathBackup:     cfg.Paths.Backup,
+		PathMedia:          cfg.Paths.Media,
+		PathPostImages:     cfg.Paths.PostImages,
+		PathPostVideos:     cfg.Paths.PostVideos,
+		PathSchedPosts:     cfg.Paths.ScheduledPosts,
+		PathTraining:       cfg.Paths.TrainingImages,
+		PathProducts:       cfg.Paths.ProductImages,
+		PathModels:         cfg.Paths.Models,
+		PathSessions:       cfg.Paths.Sessions,
+		PathDatabase:       cfg.Paths.Database,
+		PathLogs:           cfg.Paths.Logs,
+		PathCache:          cfg.Paths.Cache,
+		PathTemp:           cfg.Paths.Temp,
+		PathBackup:         cfg.Paths.Backup,
+		LLMTokensPerMinute: cfg.System.LLMTokensPerMinute,
+		LLMCostPerMinute:   cfg.System.LLMCostPerMinute,
 	})
 }
 
@@ -663,6 +768,53 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// getPostingSettingsJSON reads a platform+subtype's posting settings from
+// posting_settings (falling back to the platform-level row if a
+// subtype-specific one doesn't exist), shaped for the /api/listener_config
+// response. Replaces the old platCfg.Posting config field.
+func (s *Server) getPostingSettingsJSON(platform, subtype string) map[string]interface{} {
+	out := map[string]interface{}{
+		"random": map[string]interface{}{"enabled": false, "interval_hours": map[string]int{"min": 0, "max": 0}, "posts_per_cycle": 0, "use_global": false},
+		"manual": map[string]interface{}{"enabled": false, "payload": map[string]interface{}{"title": "", "description": "", "media": map[string]string{"type": "", "url": ""}}},
+	}
+	if s.db == nil {
+		return out
+	}
+	scanRow := func(sub string) bool {
+		var randomEnabled, randomUseGlobal, manualEnabled, minH, maxH, perCycle int
+		var title, desc, mediaType, mediaURL string
+		err := s.db.QueryRow(`
+			SELECT random_enabled, random_interval_min_hours, random_interval_max_hours,
+			       random_posts_per_cycle, random_use_global,
+			       manual_enabled, manual_title, manual_description, manual_media_type, manual_media_url
+			FROM posting_settings WHERE platform=? AND subtype=?`, platform, sub).
+			Scan(&randomEnabled, &minH, &maxH, &perCycle, &randomUseGlobal,
+				&manualEnabled, &title, &desc, &mediaType, &mediaURL)
+		if err != nil {
+			return false
+		}
+		out["random"] = map[string]interface{}{
+			"enabled":         randomEnabled == 1,
+			"interval_hours":  map[string]int{"min": minH, "max": maxH},
+			"posts_per_cycle": perCycle,
+			"use_global":      randomUseGlobal == 1,
+		}
+		out["manual"] = map[string]interface{}{
+			"enabled": manualEnabled == 1,
+			"payload": map[string]interface{}{
+				"title": title, "description": desc,
+				"media": map[string]string{"type": mediaType, "url": mediaURL},
+			},
+		}
+		return true
+	}
+	if subtype != "" && scanRow(subtype) {
+		return out
+	}
+	scanRow("")
+	return out
+}
+
 func (s *Server) handleListenerConfig(w http.ResponseWriter, r *http.Request) {
 	platform := r.URL.Query().Get("platform")
 	subtype := r.URL.Query().Get("subtype")
@@ -700,15 +852,22 @@ func (s *Server) handleListenerConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	dailyMsgs, dailyPosts, hourlyPosts := s.getPlatformRateLimitSummary(platform)
+	postingSettings := s.getPostingSettingsJSON(platform, subtype)
+
 	resp := map[string]interface{}{
-		"platform_id":       platform,
-		"subtype_id":        subtype,
-		"enabled":           platCfg.Enabled,
-		"automation":        platCfg.Automation,
-		"limits":            platCfg.Limits,
+		"platform_id": platform,
+		"subtype_id":  subtype,
+		"enabled":     platCfg.Enabled,
+		"automation":  platCfg.Automation,
+		"limits": map[string]int{
+			"daily_messages": dailyMsgs,
+			"daily_posts":    dailyPosts,
+			"hourly_posts":   hourlyPosts,
+		},
 		"messages":          platCfg.Messages,
 		"settings":          platCfg.Settings,
-		"posting":           platCfg.Posting,
+		"posting":           postingSettings,
 		"platform_specific": platformSpecific,
 	}
 	if target != nil {
@@ -964,6 +1123,410 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
 		"is_view":   true,
 		"pk_column": pkCol,
 	})
+}
+
+func (s *Server) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		jsonErr(w, 503, "database not connected")
+		return
+	}
+
+	orderID := strings.TrimPrefix(r.URL.Path, "/api/orders/detail/")
+	if orderID == "" {
+		jsonErr(w, 400, "order ID required")
+		return
+	}
+
+	var order OrderDetail
+	var createdAt, updatedAt, confirmedAt, shippedAt, deliveredAt, cancelledAt sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, user_id, platform, status, total, COALESCE(subtotal, 0), COALESCE(tax, 0),
+		       COALESCE(shipping_cost, 0), COALESCE(discount_amount, 0),
+		       COALESCE(shipping_address, ''), COALESCE(shipping_method, ''),
+		       COALESCE(tracking_number, ''), COALESCE(payment_method, ''),
+		       COALESCE(payment_status, 'pending'), COALESCE(transaction_id, ''),
+		       COALESCE(customer_notes, ''), COALESCE(internal_notes, ''),
+		       COALESCE(platform_conversation_id, ''),
+		       created_at, confirmed_at, shipped_at, delivered_at, cancelled_at, updated_at
+		FROM orders WHERE id = ?
+	`, orderID).Scan(
+		&order.ID, &order.UserID, &order.Platform, &order.Status, &order.Total,
+		&order.Subtotal, &order.Tax, &order.ShippingCost, &order.DiscountAmount,
+		&order.ShippingAddress, &order.ShippingMethod, &order.TrackingNumber,
+		&order.PaymentMethod, &order.PaymentStatus, &order.TransactionID,
+		&order.CustomerNotes, &order.InternalNotes, &order.PlatformConversationID,
+		&createdAt, &confirmedAt, &shippedAt, &deliveredAt, &cancelledAt, &updatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		jsonErr(w, 404, "order not found")
+		return
+	}
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+
+	order.CreatedAt = parseTimestamp(createdAt.String)
+	order.UpdatedAt = parseTimestamp(updatedAt.String)
+	if confirmedAt.Valid {
+		t := parseTimestamp(confirmedAt.String)
+		order.ConfirmedAt = &t
+	}
+	if shippedAt.Valid {
+		t := parseTimestamp(shippedAt.String)
+		order.ShippedAt = &t
+	}
+	if deliveredAt.Valid {
+		t := parseTimestamp(deliveredAt.String)
+		order.DeliveredAt = &t
+	}
+	if cancelledAt.Valid {
+		t := parseTimestamp(cancelledAt.String)
+		order.CancelledAt = &t
+	}
+
+	// Fetch order items
+	rows, err := s.db.Query(`
+		SELECT id, product_id, quantity, unit_price, total_price,
+		       product_name, COALESCE(product_sku, ''), COALESCE(product_image_url, '')
+		FROM order_items WHERE order_id = ?
+	`, orderID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var item OrderItemDetail
+			rows.Scan(&item.ID, &item.ProductID, &item.Quantity, &item.UnitPrice,
+				&item.TotalPrice, &item.ProductName, &item.ProductSKU, &item.ProductImageURL)
+			order.Items = append(order.Items, item)
+		}
+	}
+	if order.Items == nil {
+		order.Items = []OrderItemDetail{}
+	}
+
+	writeJSON(w, order)
+}
+
+func (s *Server) handleOrderUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		jsonErr(w, 405, "PUT method required")
+		return
+	}
+	if s.db == nil {
+		jsonErr(w, 503, "database not connected")
+		return
+	}
+
+	orderID := strings.TrimPrefix(r.URL.Path, "/api/orders/update/")
+	if orderID == "" {
+		jsonErr(w, 400, "order ID required")
+		return
+	}
+
+	var updates map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		jsonErr(w, 400, "invalid JSON")
+		return
+	}
+
+	// Build UPDATE query dynamically
+	var setClauses []string
+	var args []interface{}
+
+	// Keep this in sync with the editable fields exposed in the dashboard's
+	// order detail panel. Everything on `orders` NOT listed here is
+	// read-only in the UI (id, user_id, platform, total, subtotal,
+	// tracking_number, transaction_id, customer_notes, and all timestamps —
+	// tracking_number/customer_notes are intentionally display-only, not
+	// editable here, per product decision).
+	allowedFields := map[string]bool{
+		"status": true, "tax": true, "shipping_cost": true, "discount_amount": true,
+		"shipping_address": true, "shipping_method": true, "payment_method": true,
+		"payment_status": true, "internal_notes": true, "platform_conversation_id": true,
+	}
+
+	validStatus := map[string]bool{"pending": true, "confirmed": true, "processing": true, "shipped": true, "delivered": true, "cancelled": true, "refunded": true}
+	validPaymentStatus := map[string]bool{"pending": true, "paid": true, "failed": true, "refunded": true}
+
+	for field, value := range updates {
+		if !allowedFields[field] {
+			continue
+		}
+		if field == "status" {
+			sv, _ := value.(string)
+			if !validStatus[sv] {
+				jsonErr(w, 400, "invalid status value: "+sv)
+				return
+			}
+		}
+		if field == "payment_status" {
+			sv, _ := value.(string)
+			if !validPaymentStatus[sv] {
+				jsonErr(w, 400, "invalid payment_status value: "+sv)
+				return
+			}
+		}
+		setClauses = append(setClauses, field+" = ?")
+		args = append(args, value)
+	}
+
+	if len(setClauses) == 0 {
+		jsonErr(w, 400, "no valid fields to update")
+		return
+	}
+
+	// Add updated_at
+	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+
+	// Add timestamp fields based on status
+	if status, ok := updates["status"].(string); ok {
+		switch status {
+		case "confirmed":
+			setClauses = append(setClauses, "confirmed_at = COALESCE(confirmed_at, CURRENT_TIMESTAMP)")
+		case "shipped":
+			setClauses = append(setClauses, "shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP)")
+		case "delivered":
+			setClauses = append(setClauses, "delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP)")
+		case "cancelled":
+			setClauses = append(setClauses, "cancelled_at = COALESCE(cancelled_at, CURRENT_TIMESTAMP)")
+		}
+	}
+
+	args = append(args, orderID)
+	query := "UPDATE orders SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
+
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		jsonErr(w, 404, "order not found")
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"status": "ok", "updated": true})
+}
+
+// handleOrderMessages returns the conversation that (most likely) led to an
+// order.
+//
+// NOTE on orders.platform_conversation_id: it is NOT usable for this join.
+// It's declared in schema.sql but never written anywhere in processor.go,
+// compiler.go, or the listeners — every order in the DB has it NULL/empty.
+// Even if it were populated, `messages` has no conversation_id column to
+// match it against — messages are only scoped by user_id + received_at, with
+// no per-thread grouping. So instead this pulls messages for the order's
+// user_id in a window around the order's created_at (default: everything
+// from 48h before order creation up to 15 minutes after, capped at 100
+// rows). That's a heuristic, not a guaranteed-accurate join — a very old
+// customer could have unrelated chatter in that window. If you want a real
+// join, the fix belongs in the schema/processor: either populate
+// platform_conversation_id at order-creation time from whatever the
+// platform's native thread/chat id is, or add a conversation_id to messages
+// and stamp it consistently.
+func (s *Server) handleOrderMessages(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		jsonErr(w, 503, "database not connected")
+		return
+	}
+	orderID := strings.TrimPrefix(r.URL.Path, "/api/orders/messages/")
+	if orderID == "" {
+		jsonErr(w, 400, "order ID required")
+		return
+	}
+
+	var userID, createdAtStr string
+	err := s.db.QueryRow(`SELECT user_id, created_at FROM orders WHERE id = ?`, orderID).Scan(&userID, &createdAtStr)
+	if err == sql.ErrNoRows {
+		jsonErr(w, 404, "order not found")
+		return
+	}
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	orderCreatedAt := parseTimestamp(createdAtStr)
+
+	rows, err := s.db.Query(`
+		SELECT id, direction, message_text, COALESCE(intent, ''), COALESCE(final_response, ''), received_at
+		FROM messages
+		WHERE user_id = ?
+		  AND received_at BETWEEN datetime(?, '-48 hours') AND datetime(?, '+15 minutes')
+		ORDER BY received_at ASC
+		LIMIT 100
+	`, userID, createdAtStr, createdAtStr)
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var msgs []ConversationMessage
+	for rows.Next() {
+		var m ConversationMessage
+		var ts string
+		if err := rows.Scan(&m.ID, &m.Direction, &m.MessageText, &m.Intent, &m.FinalResponse, &ts); err != nil {
+			continue
+		}
+		m.ReceivedAt = parseTimestamp(ts)
+		msgs = append(msgs, m)
+	}
+	if msgs == nil {
+		msgs = []ConversationMessage{}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"user_id":          userID,
+		"order_created_at": orderCreatedAt,
+		"messages":         msgs,
+		"note":             "Matched by user_id + time window around order creation — orders.platform_conversation_id is not populated in this database and cannot be used for an exact join.",
+	})
+}
+
+func (s *Server) handleShipping(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		jsonErr(w, 503, "database not connected")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := s.db.Query(`
+			SELECT id, city, cost, created_at, updated_at
+			FROM shipping
+			ORDER BY city
+		`)
+		if err != nil {
+			jsonErr(w, 500, err.Error())
+			return
+		}
+		defer rows.Close()
+
+		var entries []ShippingEntry
+		for rows.Next() {
+			var entry ShippingEntry
+			var createdAt, updatedAt string
+			rows.Scan(&entry.ID, &entry.City, &entry.Cost, &createdAt, &updatedAt)
+			entry.CreatedAt = parseTimestamp(createdAt)
+			entry.UpdatedAt = parseTimestamp(updatedAt)
+			entries = append(entries, entry)
+		}
+		if entries == nil {
+			entries = []ShippingEntry{}
+		}
+		writeJSON(w, entries)
+
+	case http.MethodPost:
+		var input struct {
+			City string  `json:"city"`
+			Cost float64 `json:"cost"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			jsonErr(w, 400, "invalid JSON")
+			return
+		}
+		if input.City == "" || input.Cost < 0 {
+			jsonErr(w, 400, "city and valid cost required")
+			return
+		}
+
+		result, err := s.db.Exec(`
+			INSERT INTO shipping (city, cost) VALUES (?, ?)
+		`, input.City, input.Cost)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint") {
+				jsonErr(w, 409, "city already exists")
+			} else {
+				jsonErr(w, 500, err.Error())
+			}
+			return
+		}
+
+		id, _ := result.LastInsertId()
+		writeJSON(w, map[string]interface{}{
+			"status": "ok",
+			"id":     id,
+			"city":   input.City,
+			"cost":   input.Cost,
+		})
+
+	default:
+		jsonErr(w, 405, "method not allowed")
+	}
+}
+
+func (s *Server) handleShippingItem(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		jsonErr(w, 503, "database not connected")
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/shipping/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		jsonErr(w, 400, "invalid shipping ID")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var input struct {
+			City string  `json:"city"`
+			Cost float64 `json:"cost"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			jsonErr(w, 400, "invalid JSON")
+			return
+		}
+		if input.City == "" || input.Cost < 0 {
+			jsonErr(w, 400, "city and valid cost required")
+			return
+		}
+
+		result, err := s.db.Exec(`
+			UPDATE shipping SET city = ?, cost = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, input.City, input.Cost, id)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint") {
+				jsonErr(w, 409, "city already exists")
+			} else {
+				jsonErr(w, 500, err.Error())
+			}
+			return
+		}
+
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			jsonErr(w, 404, "shipping entry not found")
+			return
+		}
+
+		writeJSON(w, map[string]interface{}{"status": "ok", "updated": true})
+
+	case http.MethodDelete:
+		result, err := s.db.Exec("DELETE FROM shipping WHERE id = ?", id)
+		if err != nil {
+			jsonErr(w, 500, err.Error())
+			return
+		}
+
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			jsonErr(w, 404, "shipping entry not found")
+			return
+		}
+
+		writeJSON(w, map[string]interface{}{"status": "ok", "deleted": true})
+
+	default:
+		jsonErr(w, 405, "method not allowed")
+	}
 }
 
 func (s *Server) handleDBRow(w http.ResponseWriter, r *http.Request) {

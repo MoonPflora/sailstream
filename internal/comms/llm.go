@@ -305,16 +305,16 @@ func (c *Client) GenerateReply(ctx context.Context, req ReplyRequest) (*ReplyRes
 // PostRequest carries product and platform context for caption generation.
 type PostRequest struct {
 	// Product fields read from the DB row.
-	ProductName    string
-	ProductSKU     string
-	ProductPrice   float64
+	ProductName     string
+	ProductSKU      string
+	ProductPrice    float64
 	ProductCurrency string
-	AliasEn        string // first English alias
-	AliasAr        string // first Arabic alias
-	AliasKu        string // first Kurdish alias
-	UseEn          string // first English use-case
-	UseAr          string // first Arabic use-case
-	UseKu          string // first Kurdish use-case
+	AliasEn         string // first English alias
+	AliasAr         string // first Arabic alias
+	AliasKu         string // first Kurdish alias
+	UseEn           string // first English use-case
+	UseAr           string // first Arabic use-case
+	UseKu           string // first Kurdish use-case
 
 	// Platform context — used to honour per-platform MaxPostLength.
 	PlatformID string

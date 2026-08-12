@@ -31,7 +31,6 @@ type Config struct {
 	Scheduler        SchedulerConfig           `json:"scheduler"`
 	Store            StoreConfig               `json:"store"`
 	Platforms        map[string]PlatformConfig `json:"platforms"`
-	Posting          PostingConfig             `json:"posting"`
 	Paths            PathsConfig               `json:"paths"`
 	Content          ContentPool               `json:"content"`
 	ScheduledPosts   []ScheduledPost           `json:"scheduled_posts"`
@@ -59,9 +58,11 @@ type DatabaseConfig struct {
 }
 
 type SystemConfig struct {
-	Language      string     `json:"language"`
-	OperationMode string     `json:"operation_mode"`
-	WakePolicy    WakePolicy `json:"wake_policy"`
+	Language           string     `json:"language"`
+	OperationMode      string     `json:"operation_mode"`
+	WakePolicy         WakePolicy `json:"wake_policy"`
+	LLMTokensPerMinute int        `json:"llm_tokens_per_minute"`
+	LLMCostPerMinute   float64    `json:"llm_cost_per_minute"`
 }
 
 type WakePolicy struct {
@@ -114,7 +115,6 @@ type ImageRecognitionConfig struct {
 type SchedulerConfig struct {
 	Timezone             string     `json:"timezone"`
 	QuietHours           QuietHours `json:"quiet_hours"`
-	RateLimits           RateLimits `json:"rate_limits"`
 	CheckIntervalMinutes int        `json:"check_interval_minutes"`
 }
 
@@ -122,12 +122,6 @@ type QuietHours struct {
 	Enabled bool   `json:"enabled"`
 	From    string `json:"from"`
 	To      string `json:"to"`
-}
-
-type RateLimits struct {
-	MessagesPerMinute int `json:"messages_per_minute"`
-	PostsPerHour      int `json:"posts_per_hour"`
-	PostsPerDay       int `json:"posts_per_day"`
 }
 
 type StoreConfig struct {
@@ -193,22 +187,20 @@ type KeywordRule struct {
 }
 
 type PlatformConfig struct {
-	Enabled    bool                  `json:"enabled"`
-	Platform   PlatformType          `json:"platform"`
-	Subtypes   []PlatformSubtype     `json:"subtypes"`
-	Instagram  *InstagramConfig      `json:"instagram,omitempty"`
-	Facebook   *FacebookConfig       `json:"facebook,omitempty"`
-	Telegram   *TelegramConfig       `json:"telegram,omitempty"`
-	TikTok     *TikTokConfig         `json:"tiktok,omitempty"`
-	Twitter    *TwitterConfig        `json:"twitter,omitempty"`
-	WhatsApp   *WhatsAppConfig       `json:"whatsapp,omitempty"`
-	Viber      *ViberConfig          `json:"viber,omitempty"`
-	Automation AutomationConfig      `json:"automation"`
-	Posting    PlatformPostingConfig `json:"posting"`
-	Limits     PlatformLimits        `json:"limits"`
-	Metadata   PlatformMetadata      `json:"metadata"`
-	Settings   PlatformSettings      `json:"settings"`
-	Messages   MessageTemplates      `json:"messages"`
+	Enabled    bool              `json:"enabled"`
+	Platform   PlatformType      `json:"platform"`
+	Subtypes   []PlatformSubtype `json:"subtypes"`
+	Instagram  *InstagramConfig  `json:"instagram,omitempty"`
+	Facebook   *FacebookConfig   `json:"facebook,omitempty"`
+	Telegram   *TelegramConfig   `json:"telegram,omitempty"`
+	TikTok     *TikTokConfig     `json:"tiktok,omitempty"`
+	Twitter    *TwitterConfig    `json:"twitter,omitempty"`
+	WhatsApp   *WhatsAppConfig   `json:"whatsapp,omitempty"`
+	Viber      *ViberConfig      `json:"viber,omitempty"`
+	Automation AutomationConfig  `json:"automation"`
+	Metadata   PlatformMetadata  `json:"metadata"`
+	Settings   PlatformSettings  `json:"settings"`
+	Messages   MessageTemplates  `json:"messages"`
 }
 
 type PlatformSubtype struct {
@@ -219,12 +211,9 @@ type PlatformSubtype struct {
 	Auth       map[string]interface{} `json:"auth"`
 	Metadata   map[string]interface{} `json:"metadata"`
 	Automation SubtypeAutomation      `json:"automation"`
-	Limits     PlatformLimits         `json:"limits"`
-	Posting    PlatformPostingConfig  `json:"posting"`
 }
 
 type SubtypeAutomation struct {
-	AutoReply      AutoReplyConfig      `json:"auto_reply"`
 	AnswerDM       AnswerDMConfig       `json:"answer_dm"`
 	AnswerComments AnswerCommentsConfig `json:"answer_comments"`
 	WelcomeMessage WelcomeMessageConfig `json:"welcome_message"`
@@ -345,7 +334,6 @@ type ViberConfig struct {
 }
 
 type AutomationConfig struct {
-	AutoReply      AutoReplyConfig      `json:"auto_reply"`
 	AutoHeart      AutoHeartConfig      `json:"auto_heart"`
 	AutoFollow     AutoFollowConfig     `json:"auto_follow"`
 	AutoRepost     AutoRepostConfig     `json:"auto_repost"`
@@ -363,10 +351,6 @@ type MessageFilters struct {
 	BlockKeywords []string `json:"block_keywords"`
 	AllowKeywords []string `json:"allow_keywords"`
 	MinCharCount  int      `json:"min_char_count"`
-}
-
-type AutoReplyConfig struct {
-	Enabled bool `json:"enabled"`
 }
 
 type AutoHeartConfig struct {
@@ -408,49 +392,6 @@ type WelcomeMessageConfig struct {
 	Text    string `json:"text"`
 }
 
-type PlatformPostingConfig struct {
-	Random        RandomPostingConfig `json:"random"`
-	Manual        ManualPostingConfig `json:"manual"`
-	ScheduleTimes []string            `json:"schedule_times"`
-}
-
-type RandomPostingConfig struct {
-	Enabled       bool          `json:"enabled"`
-	IntervalHours IntervalHours `json:"interval_hours"`
-	PostsPerCycle int           `json:"posts_per_cycle"`
-	UseGlobal     bool          `json:"use_global"`
-}
-
-type IntervalHours struct {
-	Min int `json:"min"`
-	Max int `json:"max"`
-}
-
-type ManualPostingConfig struct {
-	Enabled bool           `json:"enabled"`
-	Payload PostingPayload `json:"payload"`
-}
-
-type PostingPayload struct {
-	Title       string       `json:"title"`
-	Description string       `json:"description"`
-	Media       PostingMedia `json:"media"`
-}
-
-type PostingMedia struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
-}
-
-type PlatformLimits struct {
-	DailyMessages int `json:"daily_messages"`
-	DailyPosts    int `json:"daily_posts"`
-	DailyHearts   int `json:"daily_hearts"`
-	DailyFollows  int `json:"daily_follows"`
-	DailyComments int `json:"daily_comments"`
-	HourlyPosts   int `json:"hourly_posts"`
-}
-
 type PlatformMetadata struct {
 	CreatedAt      string `json:"created_at"`
 	LastActive     string `json:"last_active"`
@@ -458,16 +399,6 @@ type PlatformMetadata struct {
 	TotalPosts     int    `json:"total_posts"`
 	TotalFollowers int    `json:"total_followers"`
 	TotalFollowing int    `json:"total_following"`
-}
-
-type PostingConfig struct {
-	Fallback              FallbackPosting `json:"fallback"`
-	RotationMode          string          `json:"rotation_mode"`
-	ScheduledPostsSummary map[string]int  `json:"scheduled_posts_summary"`
-}
-
-type FallbackPosting struct {
-	Random RandomPostingConfig `json:"random"`
 }
 
 type PathsConfig struct {
@@ -979,6 +910,9 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("/api/products/", s.handleProduct)
 	mux.HandleFunc("/api/products", s.handleProducts)
 
+	mux.HandleFunc("/api/shipping/", s.handleShippingItem)
+	mux.HandleFunc("/api/shipping", s.handleShipping)
+
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/config/save", s.handleSaveConfig)
 	mux.HandleFunc("/api/restart-dashboard", s.handleRestartDashboard)
@@ -1046,6 +980,179 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, htmlPath)
 }
 
+// legacyPostingAndLimits mirrors the OLD wizard JSON shape for the
+// posting.*, platforms.*.posting, platforms.*.limits, and
+// scheduler.rate_limits fields — all removed from the live Config struct
+// now that they live in posting_settings/posting_schedule/rate_limits
+// (DB). wizard.html still sends this exact shape (unchanged), so this type
+// exists purely so handleConfig's PUT case can pull those fields out of the
+// raw request body and write them to the DB instead of silently dropping
+// them when decoding into the trimmed Config struct.
+type legacyPostingAndLimits struct {
+	Scheduler struct {
+		RateLimits struct {
+			MessagesPerMinute int `json:"messages_per_minute"`
+			PostsPerHour      int `json:"posts_per_hour"`
+			PostsPerDay       int `json:"posts_per_day"`
+		} `json:"rate_limits"`
+	} `json:"scheduler"`
+	Posting struct {
+		Fallback struct {
+			Random legacyRandomPosting `json:"random"`
+		} `json:"fallback"`
+		RotationMode string `json:"rotation_mode"`
+	} `json:"posting"`
+	Platforms map[string]struct {
+		Posting  legacyPlatformPosting `json:"posting"`
+		Limits   legacyPlatformLimits  `json:"limits"`
+		Subtypes []struct {
+			ID      string                `json:"id"`
+			Posting legacyPlatformPosting `json:"posting"`
+			Limits  legacyPlatformLimits  `json:"limits"`
+		} `json:"subtypes"`
+	} `json:"platforms"`
+}
+
+type legacyPlatformPosting struct {
+	Random        legacyRandomPosting `json:"random"`
+	Manual        legacyManualPosting `json:"manual"`
+	ScheduleTimes []string            `json:"schedule_times"`
+}
+
+type legacyPlatformLimits struct {
+	DailyMessages int `json:"daily_messages"`
+	DailyPosts    int `json:"daily_posts"`
+	HourlyPosts   int `json:"hourly_posts"`
+}
+
+type legacyRandomPosting struct {
+	Enabled       bool `json:"enabled"`
+	IntervalHours struct {
+		Min int `json:"min"`
+		Max int `json:"max"`
+	} `json:"interval_hours"`
+	PostsPerCycle int  `json:"posts_per_cycle"`
+	UseGlobal     bool `json:"use_global"`
+}
+
+type legacyManualPosting struct {
+	Enabled bool `json:"enabled"`
+	Payload struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Media       struct {
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"media"`
+	} `json:"payload"`
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// applyLegacyPostingAndLimits writes the posting/rate-limit fields the
+// wizard form still submits into the DB tables that now own them
+// (posting_settings, posting_schedule, rate_limits) — config.json no
+// longer carries these fields at all after this save. Unlike
+// maestro's bootstrapRateLimits (insert-only, never overwrites), THIS is
+// the actual edit path: the wizard is where an admin changes these values,
+// so it intentionally overwrites hourly_limit/daily_limit and the
+// posting_settings row on every save, without touching current usage
+// counts.
+func (s *Server) applyLegacyPostingAndLimits(raw []byte) {
+	if s.db == nil {
+		return
+	}
+	var legacy legacyPostingAndLimits
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		log.Printf("[Wizzard] applyLegacyPostingAndLimits: could not parse posting/limits from request body: %v", err)
+		return
+	}
+
+	upsertPosting := func(platform, subtype string, rp legacyRandomPosting, mp legacyManualPosting, rotationMode string) {
+		_, err := s.db.Exec(`
+			INSERT INTO posting_settings
+				(platform, subtype, random_enabled, random_interval_min_hours, random_interval_max_hours,
+				 random_posts_per_cycle, random_use_global,
+				 manual_enabled, manual_title, manual_description, manual_media_type, manual_media_url,
+				 rotation_mode)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(platform, subtype) DO UPDATE SET
+				random_enabled=excluded.random_enabled,
+				random_interval_min_hours=excluded.random_interval_min_hours,
+				random_interval_max_hours=excluded.random_interval_max_hours,
+				random_posts_per_cycle=excluded.random_posts_per_cycle,
+				random_use_global=excluded.random_use_global,
+				manual_enabled=excluded.manual_enabled,
+				manual_title=excluded.manual_title,
+				manual_description=excluded.manual_description,
+				manual_media_type=excluded.manual_media_type,
+				manual_media_url=excluded.manual_media_url,
+				rotation_mode=CASE WHEN excluded.rotation_mode != '' THEN excluded.rotation_mode ELSE posting_settings.rotation_mode END`,
+			platform, subtype,
+			boolToInt(rp.Enabled), rp.IntervalHours.Min, rp.IntervalHours.Max, rp.PostsPerCycle, boolToInt(rp.UseGlobal),
+			boolToInt(mp.Enabled), mp.Payload.Title, mp.Payload.Description, mp.Payload.Media.Type, mp.Payload.Media.URL,
+			rotationMode)
+		if err != nil {
+			log.Printf("[Wizzard] posting_settings upsert error for %s/%s: %v", platform, subtype, err)
+		}
+	}
+	upsertLimits := func(platform, subtype string, l legacyPlatformLimits) {
+		if l.DailyMessages == 0 && l.DailyPosts == 0 && l.HourlyPosts == 0 {
+			return // nothing submitted for this platform/subtype — don't clobber existing limits with zeros
+		}
+		if l.DailyMessages > 0 {
+			s.db.Exec(`
+				INSERT INTO rate_limits (platform, subtype, action, hourly_limit, daily_limit, current_hour_count, current_day_count, last_reset_hour, last_reset_day)
+				VALUES (?,?,'messages',0,?,0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+				ON CONFLICT(platform, subtype, action) DO UPDATE SET daily_limit=excluded.daily_limit`,
+				platform, subtype, l.DailyMessages)
+		}
+		if l.DailyPosts > 0 || l.HourlyPosts > 0 {
+			s.db.Exec(`
+				INSERT INTO rate_limits (platform, subtype, action, hourly_limit, daily_limit, current_hour_count, current_day_count, last_reset_hour, last_reset_day)
+				VALUES (?,?,'posts',?,?,0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+				ON CONFLICT(platform, subtype, action) DO UPDATE SET
+					hourly_limit=CASE WHEN excluded.hourly_limit > 0 THEN excluded.hourly_limit ELSE rate_limits.hourly_limit END,
+					daily_limit=CASE WHEN excluded.daily_limit > 0 THEN excluded.daily_limit ELSE rate_limits.daily_limit END`,
+				platform, subtype, l.HourlyPosts, l.DailyPosts)
+		}
+	}
+	upsertSchedule := func(platform, subtype string, times []string) {
+		for _, t := range times {
+			if _, err := time.Parse("15:04", t); err != nil {
+				continue
+			}
+			s.db.Exec(`
+				INSERT INTO posting_schedule (platform, subtype, post_time, enabled)
+				VALUES (?,?,?,1) ON CONFLICT(platform, subtype, post_time) DO UPDATE SET enabled=1`,
+				platform, subtype, t)
+		}
+	}
+
+	upsertPosting("__global__", "", legacy.Posting.Fallback.Random, legacyManualPosting{}, legacy.Posting.RotationMode)
+	// Old global scheduler.rate_limits had no per-platform identity — it
+	// was only ever used as a fallback seed, so there's no single DB row
+	// left for it to write into once every platform/subtype has its own
+	// row. Nothing to migrate here beyond what bootstrapRateLimits already
+	// seeds with sane defaults on first run.
+
+	for platformID, pc := range legacy.Platforms {
+		upsertPosting(platformID, "", pc.Posting.Random, pc.Posting.Manual, "")
+		upsertLimits(platformID, "", pc.Limits)
+		upsertSchedule(platformID, "", pc.Posting.ScheduleTimes)
+		for _, sub := range pc.Subtypes {
+			upsertPosting(platformID, sub.ID, sub.Posting.Random, sub.Posting.Manual, "")
+			upsertLimits(platformID, sub.ID, sub.Limits)
+			upsertSchedule(platformID, sub.ID, sub.Posting.ScheduleTimes)
+		}
+	}
+}
+
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -1054,8 +1161,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfgMu.RUnlock()
 		jsonOK(w, cfg)
 	case http.MethodPut:
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			jsonErr(w, 400, err.Error())
+			return
+		}
 		var newCfg Config
-		if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+		if err := json.Unmarshal(bodyBytes, &newCfg); err != nil {
 			jsonErr(w, 400, err.Error())
 			return
 		}
@@ -1063,6 +1175,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfgMu.Lock()
 		s.cfg = &newCfg
 		s.cfgMu.Unlock()
+		// Posting timing and rate limits no longer live in config.json —
+		// pull them out of the same request body and persist to the DB
+		// tables that now own them. wizard.html doesn't need to change;
+		// it still sends this data, it just gets routed differently now.
+		s.applyLegacyPostingAndLimits(bodyBytes)
 		s.invalidateTableCache()
 		jsonOK(w, map[string]bool{"ok": true})
 	default:
@@ -2749,6 +2866,135 @@ func (s *Server) handleIRBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, map[string]string{"path": strings.TrimSpace(string(out))})
+}
+
+// handleShipping and handleShippingItem manage the `shipping` table
+// (city, cost — a flat per-city delivery cost). This is deliberately kept
+// in sync with dashboard.go's handlers of the same name: the wizard and the
+// dashboard are separate binaries/servers, each with their own *sql.DB, so
+// the CRUD logic has to be duplicated rather than shared.
+func (s *Server) handleShipping(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		jsonErr(w, 503, "database not connected — save config with a valid database path first")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := s.db.Query(`SELECT id, city, cost, created_at, updated_at FROM shipping ORDER BY city`)
+		if err != nil {
+			jsonErr(w, 500, err.Error())
+			return
+		}
+		defer rows.Close()
+
+		var entries []map[string]interface{}
+		for rows.Next() {
+			var id int
+			var city, createdAt, updatedAt string
+			var cost float64
+			if err := rows.Scan(&id, &city, &cost, &createdAt, &updatedAt); err != nil {
+				continue
+			}
+			entries = append(entries, map[string]interface{}{
+				"id": id, "city": city, "cost": cost,
+				"created_at": createdAt, "updated_at": updatedAt,
+			})
+		}
+		if entries == nil {
+			entries = []map[string]interface{}{}
+		}
+		jsonOK(w, entries)
+
+	case http.MethodPost:
+		var input struct {
+			City string  `json:"city"`
+			Cost float64 `json:"cost"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			jsonErr(w, 400, "invalid JSON")
+			return
+		}
+		if input.City == "" || input.Cost < 0 {
+			jsonErr(w, 400, "city and valid cost required")
+			return
+		}
+		result, err := s.db.Exec(`INSERT INTO shipping (city, cost) VALUES (?, ?)`, input.City, input.Cost)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint") {
+				jsonErr(w, 409, "city already exists")
+			} else {
+				jsonErr(w, 500, err.Error())
+			}
+			return
+		}
+		id, _ := result.LastInsertId()
+		jsonOK(w, map[string]interface{}{"id": id, "city": input.City, "cost": input.Cost})
+
+	default:
+		jsonErr(w, 405, "method not allowed")
+	}
+}
+
+func (s *Server) handleShippingItem(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		jsonErr(w, 503, "database not connected")
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/shipping/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		jsonErr(w, 400, "invalid shipping ID")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var input struct {
+			City string  `json:"city"`
+			Cost float64 `json:"cost"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			jsonErr(w, 400, "invalid JSON")
+			return
+		}
+		if input.City == "" || input.Cost < 0 {
+			jsonErr(w, 400, "city and valid cost required")
+			return
+		}
+		result, err := s.db.Exec(`UPDATE shipping SET city = ?, cost = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, input.City, input.Cost, id)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint") {
+				jsonErr(w, 409, "city already exists")
+			} else {
+				jsonErr(w, 500, err.Error())
+			}
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			jsonErr(w, 404, "shipping entry not found")
+			return
+		}
+		jsonOK(w, map[string]bool{"ok": true})
+
+	case http.MethodDelete:
+		result, err := s.db.Exec("DELETE FROM shipping WHERE id = ?", id)
+		if err != nil {
+			jsonErr(w, 500, err.Error())
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			jsonErr(w, 404, "shipping entry not found")
+			return
+		}
+		jsonOK(w, map[string]bool{"ok": true})
+
+	default:
+		jsonErr(w, 405, "method not allowed")
+	}
 }
 
 func nullStr(s string) interface{} {

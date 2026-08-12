@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS platform_users (
     username TEXT,
     display_name TEXT,
     profile_pic_url TEXT,
-    conversation_state TEXT DEFAULT 'idle' CHECK(conversation_state IN ('idle', 'browsing', 'ordering', 'support')),
+    conversation_state TEXT DEFAULT 'idle' CHECK(conversation_state IN ('idle', 'browsing', 'ordering', 'support', 'awaiting_order_details')),
     last_intent TEXT,
     last_product_sku TEXT,
     pending_data TEXT,
@@ -40,6 +40,57 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rate_limits_platform ON rate_limits(platform, subtype, action);
+
+-- posting_settings replaces config.json's platforms.<platform>.posting.random
+-- and .manual (and, for the platform=='__global__' row, the old top-level
+-- posting.fallback.random + posting.rotation_mode). One row per
+-- platform+subtype ('' subtype = platform-level fallback settings, matching
+-- how config used to have both a platform-level and subtype-level posting
+-- block). This is the single source of truth for posting timing settings —
+-- no config.json equivalent anymore.
+CREATE TABLE IF NOT EXISTS posting_settings (
+    platform TEXT NOT NULL,
+    subtype TEXT NOT NULL DEFAULT '',
+
+    random_enabled INTEGER DEFAULT 0 CHECK(random_enabled IN (0, 1)),
+    random_interval_min_hours INTEGER DEFAULT 4 CHECK(random_interval_min_hours >= 0),
+    random_interval_max_hours INTEGER DEFAULT 12 CHECK(random_interval_max_hours >= 0),
+    random_posts_per_cycle INTEGER DEFAULT 1 CHECK(random_posts_per_cycle >= 0),
+    random_use_global INTEGER DEFAULT 0 CHECK(random_use_global IN (0, 1)),
+
+    manual_enabled INTEGER DEFAULT 0 CHECK(manual_enabled IN (0, 1)),
+    manual_title TEXT,
+    manual_description TEXT,
+    manual_media_type TEXT,
+    manual_media_url TEXT,
+
+    rotation_mode TEXT DEFAULT 'sequential',
+
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (platform, subtype)
+);
+
+CREATE INDEX IF NOT EXISTS idx_posting_settings_platform ON posting_settings(platform, subtype);
+
+-- posting_schedule replaces config.json's platforms.<platform>.posting.schedule_times
+-- (previously a flat string array with no platform attribution once parsed —
+-- see maestro_main.go's ScheduleSlot fix). One row per fixed daily post time.
+-- last_fired_at lets the scheduler tell "already fired today" from "missed
+-- entirely" apart, and is the hook for a future missed-post catch-up pass.
+CREATE TABLE IF NOT EXISTS posting_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform TEXT NOT NULL,
+    subtype TEXT NOT NULL DEFAULT '',
+    post_time TEXT NOT NULL,
+    enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+    last_fired_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(platform, subtype, post_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_posting_schedule_platform ON posting_schedule(platform, subtype);
+CREATE INDEX IF NOT EXISTS idx_posting_schedule_enabled ON posting_schedule(enabled) WHERE enabled = 1;
+
 
 CREATE TABLE IF NOT EXISTS products (
     id TEXT PRIMARY KEY,
@@ -258,6 +309,16 @@ CREATE TABLE IF NOT EXISTS order_items (
     FOREIGN KEY (product_id) REFERENCES products(id)
 );
 
+CREATE TABLE IF NOT EXISTS shipping (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    city TEXT NOT NULL UNIQUE,
+    cost REAL NOT NULL CHECK(cost >= 0),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_shipping_city ON shipping(city);
+
 CREATE TABLE IF NOT EXISTS scheduled_posts (
     id TEXT PRIMARY KEY,
     title TEXT,
@@ -346,7 +407,6 @@ CREATE INDEX IF NOT EXISTS idx_image_log_confidence ON image_processing_log(conf
 
 CREATE INDEX IF NOT EXISTS idx_urgent_messages_status ON urgent_messages(status);
 CREATE INDEX IF NOT EXISTS idx_urgent_messages_priority ON urgent_messages(priority DESC);
-
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_created_ay ON orders(created_at DESC);

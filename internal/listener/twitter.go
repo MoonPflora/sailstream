@@ -546,8 +546,8 @@ func (tc *TwitterCollector) ensureClient(ctx context.Context) error {
 		return nil
 	}
 
-	return fmt.Errorf("no usable credentials for %s: need saved cookies, auth_token+ct0, or username+password " +
-		"(set via subtype auth config or TWITTER_* env vars)")
+	return fmt.Errorf("no usable credentials for %s: need saved cookies, auth_token+ct0, or username+password "+
+		"(set via subtype auth config or TWITTER_* env vars)", tc.accountID)
 }
 
 func (tc *TwitterCollector) safeScraper() *twitterscraper.Scraper {

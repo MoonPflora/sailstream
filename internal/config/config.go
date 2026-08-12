@@ -7,7 +7,6 @@ type Config struct {
 	Scheduler        SchedulerConfig           `json:"scheduler"`
 	Store            StoreConfig               `json:"store"`
 	Platforms        map[string]PlatformConfig `json:"platforms"`
-	Posting          PostingConfig             `json:"posting"`
 	Paths            PathsConfig               `json:"paths"`
 	Content          ContentPool               `json:"content"`
 	ScheduledPosts   []ScheduledPost           `json:"scheduled_posts"`
@@ -73,9 +72,11 @@ type DatabaseConfig struct {
 }
 
 type SystemConfig struct {
-	Language      string     `json:"language"`
-	OperationMode string     `json:"operation_mode"`
-	WakePolicy    WakePolicy `json:"wake_policy"`
+	Language           string     `json:"language"`
+	OperationMode      string     `json:"operation_mode"`
+	WakePolicy         WakePolicy `json:"wake_policy"`
+	LLMTokensPerMinute int        `json:"llm_tokens_per_minute"`
+	LLMCostPerMinute   float64    `json:"llm_cost_per_minute"`
 }
 
 type WakePolicy struct {
@@ -128,7 +129,6 @@ type ImageRecognition struct {
 type SchedulerConfig struct {
 	Timezone             string     `json:"timezone"`
 	QuietHours           QuietHours `json:"quiet_hours"`
-	RateLimits           RateLimits `json:"rate_limits"`
 	CheckIntervalMinutes int        `json:"check_interval_minutes"`
 }
 
@@ -136,12 +136,6 @@ type QuietHours struct {
 	Enabled bool   `json:"enabled"`
 	From    string `json:"from"`
 	To      string `json:"to"`
-}
-
-type RateLimits struct {
-	MessagesPerMinute int `json:"messages_per_minute"`
-	PostsPerHour      int `json:"posts_per_hour"`
-	PostsPerDay       int `json:"posts_per_day"`
 }
 
 type StoreConfig struct {
@@ -220,12 +214,10 @@ type PlatformConfig struct {
 	WhatsApp  *WhatsAppConfig  `json:"whatsapp,omitempty"`
 	Viber     *ViberConfig     `json:"viber,omitempty"`
 
-	Automation AutomationConfig      `json:"automation"`
-	Posting    PlatformPostingConfig `json:"posting"`
-	Limits     PlatformLimits        `json:"limits"`
-	Metadata   PlatformMetadata      `json:"metadata"`
-	Settings   PlatformSettings      `json:"settings"`
-	Messages   MessageTemplates      `json:"messages"`
+	Automation AutomationConfig `json:"automation"`
+	Metadata   PlatformMetadata `json:"metadata"`
+	Settings   PlatformSettings `json:"settings"`
+	Messages   MessageTemplates `json:"messages"`
 }
 
 type PlatformSubtype struct {
@@ -235,9 +227,7 @@ type PlatformSubtype struct {
 	Enabled    bool                   `json:"enabled"`
 	Auth       map[string]interface{} `json:"auth"`
 	Metadata   map[string]interface{} `json:"metadata"`
-	Limits     PlatformLimits         `json:"limits"`
 	Automation AutomationConfig       `json:"automation"`
-	Posting    PlatformPostingConfig  `json:"posting"`
 }
 
 type PlatformSettings struct {
@@ -374,7 +364,6 @@ type ViberConfig struct {
 }
 
 type AutomationConfig struct {
-	AutoReply      AutoReplyConfig      `json:"auto_reply"`
 	AutoHeart      AutoHeartConfig      `json:"auto_heart"`
 	AutoFollow     AutoFollowConfig     `json:"auto_follow"`
 	AutoRepost     AutoRepostConfig     `json:"auto_repost"`
@@ -392,10 +381,6 @@ type MessageFilters struct {
 	BlockKeywords []string `json:"block_keywords"`
 	AllowKeywords []string `json:"allow_keywords"`
 	MinCharCount  int      `json:"min_char_count"`
-}
-
-type AutoReplyConfig struct {
-	Enabled bool `json:"enabled"`
 }
 
 type AutoHeartConfig struct {
@@ -442,49 +427,6 @@ type WelcomeMessageConfig struct {
 	Text    string `json:"text"`
 }
 
-type PlatformPostingConfig struct {
-	Random        RandomPostingConfig `json:"random"`
-	Manual        ManualPostingConfig `json:"manual"`
-	ScheduleTimes []string            `json:"schedule_times"`
-}
-
-type RandomPostingConfig struct {
-	Enabled       bool          `json:"enabled"`
-	IntervalHours IntervalHours `json:"interval_hours"`
-	PostsPerCycle int           `json:"posts_per_cycle"`
-	UseGlobal     bool          `json:"use_global"`
-}
-
-type IntervalHours struct {
-	Min int `json:"min"`
-	Max int `json:"max"`
-}
-
-type ManualPostingConfig struct {
-	Enabled bool           `json:"enabled"`
-	Payload PostingPayload `json:"payload"`
-}
-
-type PostingPayload struct {
-	Title       string       `json:"title"`
-	Description string       `json:"description"`
-	Media       PostingMedia `json:"media"`
-}
-
-type PostingMedia struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
-}
-
-type PlatformLimits struct {
-	DailyMessages int `json:"daily_messages"`
-	DailyPosts    int `json:"daily_posts"`
-	DailyHearts   int `json:"daily_hearts"`
-	DailyFollows  int `json:"daily_follows"`
-	DailyComments int `json:"daily_comments"`
-	HourlyPosts   int `json:"hourly_posts"`
-}
-
 type PlatformMetadata struct {
 	CreatedAt      string `json:"created_at"`
 	LastActive     string `json:"last_active"`
@@ -492,16 +434,6 @@ type PlatformMetadata struct {
 	TotalPosts     int    `json:"total_posts"`
 	TotalFollowers int    `json:"total_followers"`
 	TotalFollowing int    `json:"total_following"`
-}
-
-type PostingConfig struct {
-	Fallback              FallbackPosting `json:"fallback"`
-	RotationMode          string          `json:"rotation_mode"`
-	ScheduledPostsSummary map[string]int  `json:"scheduled_posts_summary"`
-}
-
-type FallbackPosting struct {
-	Random RandomPostingConfig `json:"random"`
 }
 
 type PathsConfig struct {
@@ -528,7 +460,6 @@ func (g *GenerationSettings) Validate() error      { return nil }
 func (i *ImageRecognition) Validate() error        { return nil }
 func (s *SchedulerConfig) Validate() error         { return nil }
 func (q *QuietHours) Validate() error              { return nil }
-func (r *RateLimits) Validate() error              { return nil }
 func (s *StoreConfig) Validate() error             { return nil }
 func (c *ContactInfo) Validate() error             { return nil }
 func (c *ContentPool) Validate() error             { return nil }
@@ -556,23 +487,13 @@ func (tw *TwitterConfig) Validate() error          { return nil }
 func (v *ViberConfig) Validate() error             { return nil }
 func (ac *AutomationConfig) Validate() error       { return nil }
 func (mf *MessageFilters) Validate() error         { return nil }
-func (ar *AutoReplyConfig) Validate() error        { return nil }
 func (ah *AutoHeartConfig) Validate() error        { return nil }
 func (af *AutoFollowConfig) Validate() error       { return nil }
 func (ar *AutoRepostConfig) Validate() error       { return nil }
 func (ad *AnswerDMConfig) Validate() error         { return nil }
 func (ac *AnswerCommentsConfig) Validate() error   { return nil }
 func (wm *WelcomeMessageConfig) Validate() error   { return nil }
-func (pc *PlatformPostingConfig) Validate() error  { return nil }
-func (rp *RandomPostingConfig) Validate() error    { return nil }
-func (ih *IntervalHours) Validate() error          { return nil }
-func (mp *ManualPostingConfig) Validate() error    { return nil }
-func (pp *PostingPayload) Validate() error         { return nil }
-func (pm *PostingMedia) Validate() error           { return nil }
-func (pl *PlatformLimits) Validate() error         { return nil }
 func (pm *PlatformMetadata) Validate() error       { return nil }
-func (pc *PostingConfig) Validate() error          { return nil }
-func (fp *FallbackPosting) Validate() error        { return nil }
 func (mt *MessageTemplates) Validate() error       { return nil }
 func (kr *KeywordRule) Validate() error            { return nil }
 func (spp *ScheduledPostPlatform) Validate() error { return nil }

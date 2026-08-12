@@ -542,6 +542,24 @@ func (p *Processor) shouldProcessImmediately(notification *listener.Notification
 	if !ok || !pc.Enabled {
 		return false
 	}
+
+	// Check subtype-level automation first (dashboard saves per-subtype).
+	// Falls back to platform-level automation if no subtype match.
+	if notification.SubtypeID != "" {
+		for _, sub := range pc.Subtypes {
+			if sub.ID == notification.SubtypeID {
+				switch notification.Type {
+				case listener.NotificationTypeMessage:
+					return sub.Automation.AnswerDM.Enabled
+				case listener.NotificationTypeComment:
+					return sub.Automation.AnswerComments.Enabled
+				}
+				return false
+			}
+		}
+	}
+
+	// Fallback to platform-level automation
 	switch notification.Type {
 	case listener.NotificationTypeMessage:
 		return pc.Automation.AnswerDM.Enabled
@@ -712,6 +730,36 @@ func (p *Processor) commitTicketResult(ctx context.Context, userID string, notif
 	`, msgID, notification.PlatformID, userID, text, messageType, mediaURL, result.Intent); err != nil {
 		return fmt.Errorf("insert message: %w", err)
 	}
+
+	// preserve_prior_state means this ticket only answered a side question
+	// (e.g. "how much is delivery?" asked mid-checkout) and must NOT disturb
+	// whatever order-flow state the user was already in. Without this, the
+	// unconditional last_intent/conversation_state update below would silently
+	// bump the user out of their in-progress order (losing collected delivery
+	// details, an order about to be confirmed, etc.) just because they asked
+	// an unrelated question along the way.
+	if preserve, _ := result.Data["preserve_prior_state"].(bool); preserve {
+		if _, err := tx.ExecContext(ctx, `UPDATE platform_users SET last_active = CURRENT_TIMESTAMP WHERE id = ?`, userID); err != nil {
+			return fmt.Errorf("update user last_active: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		appendDBWrite(result, map[string]interface{}{
+			"table":      "messages",
+			"op":         "insert",
+			"message_id": msgID,
+			"user_id":    userID,
+		})
+		appendDBWrite(result, map[string]interface{}{
+			"table":   "platform_users",
+			"op":      "update",
+			"user_id": userID,
+			"note":    "state_preserved (side question during active flow)",
+		})
+		return nil
+	}
+
 	lastProductSKU := ""
 	if product, ok := result.Data["product"].(map[string]interface{}); ok {
 		if sku, ok := product["sku"].(string); ok {
@@ -726,6 +774,9 @@ func (p *Processor) commitTicketResult(ctx context.Context, userID string, notif
 			setPending = true
 		}
 	} else if clear, ok := result.Data["clear_pending_data"].(bool); ok && clear {
+		setPending = true
+	} else if !setPending && isProductBrowsingIntent(result.Intent) {
+		// New product browsing intent — clear any stale pending_data from prior order flow
 		setPending = true
 	}
 	newConvState := intentToConversationState(result.Intent)
@@ -752,13 +803,21 @@ func (p *Processor) commitTicketResult(ctx context.Context, userID string, notif
 		"message_type": messageType,
 		"intent":       result.Intent,
 	})
+	// The UPDATE above uses COALESCE(NULLIF(?, ''), last_product_sku) — an
+	// empty lastProductSKU leaves the existing column value untouched. The
+	// trace log used to print the raw (often empty) Go variable here, which
+	// made it look like last_product_sku had been cleared when it hadn't.
+	skuLogValue := interface{}(lastProductSKU)
+	if lastProductSKU == "" {
+		skuLogValue = "(unchanged)"
+	}
 	appendDBWrite(result, map[string]interface{}{
 		"table":              "platform_users",
 		"op":                 "update",
 		"user_id":            userID,
 		"last_intent":        result.Intent,
 		"conversation_state": newConvState,
-		"last_product_sku":   lastProductSKU,
+		"last_product_sku":   skuLogValue,
 		"pending_data_set":   setPending,
 	})
 	return nil
@@ -806,11 +865,34 @@ func appendDBWrite(result *ProcessResult, entry map[string]interface{}) {
 	result.Data["db_writes"] = writes
 }
 
+// intentToConversationState maps an intent to a conversation state.
+// Package-level function shared by both Processor and Compiler.
 func intentToConversationState(intent string) string {
 	switch intent {
-	case "order_intent", "order_intent_detected", "order_details_received",
-		"order_intent_confirmed", "insufficient_stock":
+	case "order_intent", "order_intent_detected", "order_intent_confirmed",
+		"insufficient_stock", "awaiting_quantity", "order_details_received",
+		"awaiting_order_details":
+		// awaiting_quantity/awaiting_order_details used to be returned
+		// verbatim as the conversation_state value, but the platform_users
+		// table's CHECK constraint only allows
+		// ('idle', 'browsing', 'ordering', 'support') — neither of those
+		// strings is in that list. Every commit for a ticket with one of
+		// these intents was silently failing the UPDATE (constraint
+		// violation), which rolled back the ENTIRE state write for that
+		// turn — last_intent, conversation_state, last_product_sku, and
+		// pending_data all stayed stuck at their previous values even
+		// though a reply implying a new state had already been sent. This
+		// is the actual cause of last_product_sku/pending_data appearing to
+		// never clear. All of these are mid-order sub-steps, so they map to
+		// the same "ordering" bucket as order_intent/insufficient_stock.
 		return "ordering"
+	case "order_completed":
+		// The order is done, not "in progress" — leaving this in the same
+		// bucket as order_intent/insufficient_stock caused conversation_state
+		// to stay stuck on "ordering" indefinitely after a successful
+		// checkout, until some unrelated later message happened to overwrite
+		// it with a different intent.
+		return "idle"
 	case "product_confirmation", "product_price_query", "product_availability",
 		"alias_search", "image_recognition", "pack_inquiry", "multiple_products_found", "product_unknown":
 		return "browsing"
@@ -819,6 +901,149 @@ func intentToConversationState(intent string) string {
 	default:
 		return "idle"
 	}
+}
+
+func isProductBrowsingIntent(intent string) bool {
+	switch intent {
+	case "product_availability", "product_price_query", "product_confirmation",
+		"alias_search", "image_recognition", "pack_inquiry", "multiple_products_found":
+		return true
+	}
+	return false
+}
+
+// errInsufficientStock signals that stock ran out between the time the order
+// was first quoted to the customer and the moment they actually confirmed it,
+// so the caller can send a proper stock-warning instead of a generic
+// "something went wrong" message.
+var errInsufficientStock = errors.New("insufficient stock")
+
+// createOrderInDB finalizes an order. shippingCity/shippingCost (from
+// matchShippingCity, resolved earlier in the flow and carried through
+// pending_data) are added on top of the product subtotal to make the DB total
+// match what the customer was shown and asked to confirm.
+func (p *Processor) createOrderInDB(ctx context.Context, notification *listener.Notification, userData map[string]interface{}, product map[string]interface{}, quantity int, shippingCity string, shippingCost float64) (string, error) {
+	userID := p.getUserID(notification)
+
+	var internalID string
+	err := p.db.QueryRowContext(ctx, `SELECT id FROM platform_users WHERE platform = ? AND platform_user_id = ?`,
+		notification.PlatformID, userID).Scan(&internalID)
+	if err != nil {
+		return "", fmt.Errorf("lookup internal user: %w", err)
+	}
+
+	orderID := "ORD-" + uuid.New().String()[:8]
+
+	var price float64
+	switch v := product["price"].(type) {
+	case float64:
+		price = v
+	case int64:
+		price = float64(v)
+	case int:
+		price = float64(v)
+	}
+
+	subtotal := price * float64(quantity)
+	total := subtotal + shippingCost
+	productName, _ := product["name"].(string)
+	productSKU, _ := product["sku"].(string)
+	productImageURL, _ := product["image_url"].(string)
+	productID, _ := product["id"].(string)
+
+	// Capture delivery details (name/phone/address) supplied during ordering
+	// so the created order carries them in shipping_address. The entire raw
+	// paragraph the user sent is kept verbatim as the shipping address, and
+	// also stored as customer_notes.
+	shippingAddr := ""
+	customerNotes := ""
+	if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+		var pdMap map[string]interface{}
+		if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+			if raw, ok := pdMap["raw_text"].(string); ok && raw != "" {
+				shippingAddr = raw
+				customerNotes = raw
+			} else if dd, ok := pdMap["delivery_details"].(map[string]interface{}); ok {
+				var parts []string
+				for k, v := range dd {
+					if k == "has_name" || k == "has_phone" || k == "has_address" {
+						continue
+					}
+					parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+				}
+				if len(parts) > 0 {
+					shippingAddr = strings.Join(parts, ", ")
+					customerNotes = shippingAddr
+				}
+			}
+		}
+	}
+
+	// Populate the order columns that would otherwise be left NULL:
+	// tracking_number, customer_notes, internal_notes, platform_conversation_id.
+	trackingNumber := "TRK-" + strings.ToUpper(strings.ReplaceAll(uuid.New().String(), "-", ""))[:12]
+	internalNotes := "Created via automated chat flow"
+	if shippingCity != "" {
+		internalNotes = fmt.Sprintf("Created via automated chat flow. Shipping: %s (%.2f).", shippingCity, shippingCost)
+	}
+	platformConvID := ""
+	if notification.Message != nil {
+		platformConvID = notification.Message.ConversationID
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin order tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Re-check stock inside the transaction: the product data the customer was
+	// quoted may be minutes or hours old by the time they actually confirm, and
+	// other orders may have consumed the stock in the meantime. Without this,
+	// an order could be "created" for something that's no longer available,
+	// with nothing in the flow ever telling the customer or reserving stock.
+	if productID != "" {
+		var currentStock, reserved int64
+		if err := tx.QueryRowContext(ctx, `SELECT stock, reserved_stock FROM products WHERE id = ?`, productID).Scan(&currentStock, &reserved); err != nil {
+			return "", fmt.Errorf("recheck stock: %w", err)
+		}
+		if currentStock-reserved < int64(quantity) {
+			return "", errInsufficientStock
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE products SET reserved_stock = reserved_stock + ? WHERE id = ?`, quantity, productID); err != nil {
+			return "", fmt.Errorf("reserve stock: %w", err)
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO orders (id, user_id, platform, status, total, subtotal, shipping_address, tracking_number, customer_notes, internal_notes, platform_conversation_id, created_at, updated_at)
+		VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, orderID, internalID, notification.PlatformID, total, subtotal, shippingAddr, trackingNumber, customerNotes, internalNotes, platformConvID)
+	if err != nil {
+		return "", fmt.Errorf("insert order: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, product_name, product_sku, product_image_url)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, orderID, productID, quantity, price, subtotal, productName, productSKU, productImageURL)
+	if err != nil {
+		return "", fmt.Errorf("insert order item: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE platform_users SET total_orders = total_orders + 1, total_spent = total_spent + ?, last_active = CURRENT_TIMESTAMP WHERE id = ?
+	`, total, internalID)
+	if err != nil {
+		return "", fmt.Errorf("update user stats: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit order tx: %w", err)
+	}
+
+	log.Printf("[Processor] Order %s created for user %s (product=%s, qty=%d, subtotal=%.2f, shipping=%.2f, total=%.2f)", orderID, internalID, productSKU, quantity, subtotal, shippingCost, total)
+	return orderID, nil
 }
 
 func (p *Processor) getSenderMeta(notification *listener.Notification) (username, displayName string) {
@@ -896,16 +1121,17 @@ func (p *Processor) processNotificationInternal(ctx context.Context, notificatio
 		}
 	}
 
-	if text != "" && p.isSimpleAcknowledgement(text) {
-		return p.createSimpleAck(notification, text), nil
-	}
-
 	if text != "" {
 		if p.isPureGreeting(text) {
 			return p.createGreetingTicket(notification), nil
 		}
 		if p.isStoreInfoQuery(text) {
 			return p.createStoreInfoTicket(notification), nil
+		}
+		// Standalone "how much is delivery?" question — answered directly from
+		// the shipping table, independent of any product/order in progress.
+		if p.isDeliveryCostQuery(text) {
+			return p.createDeliveryCostTicket(ctx, notification, text), nil
 		}
 	}
 
@@ -914,6 +1140,9 @@ func (p *Processor) processNotificationInternal(ctx context.Context, notificatio
 			return p.createResult(notification, "send_cancellation", "cancellation", map[string]interface{}{
 				"language": p.detectLanguage(text),
 			}), nil
+		}
+		if p.isOrderStatusQuery(text) {
+			return p.createOrderStatusTicket(ctx, notification), nil
 		}
 		if intent, matched := p.classifyEscalationIntent(text); matched {
 			return p.createIntentEscalationTicket(ctx, notification, intent), nil
@@ -934,18 +1163,39 @@ func (p *Processor) processNotificationInternal(ctx context.Context, notificatio
 		return p.createPriceHaggleRejection(notification, text), nil
 	}
 
-	intentNeedsProduct := text != "" && (p.isPriceQuery(text) || p.isOrderIntent(text) || p.isPackIntent(text) || p.isAvailabilityQuery(text))
+	intentNeedsProduct := text != "" && (p.isPriceQuery(text) || p.isOrderIntent(text) || p.isPackIntent(text) || p.isAvailabilityQuery(text) || p.isCompatibilityQuery(text))
+
+	// Fallback: if product not found but user has last_product_sku, try that before asking "what product?"
+	if intentNeedsProduct && product == nil && userData != nil {
+		if lastSKU, ok := userData["last_product_sku"].(string); ok && lastSKU != "" {
+			if lastProduct := p.getProductBySKU(ctx, lastSKU); lastProduct != nil {
+				product = lastProduct
+				productSource = "previous_conversation"
+			}
+		}
+	}
 
 	if intentNeedsProduct && product == nil {
 		return p.createProductRequestTicket(notification), nil
 	}
 
 	if product != nil {
+		if p.isCompatibilityQuery(text) {
+			return p.createProductCompatibilityTicket(ctx, notification, product, text), nil
+		}
 		if p.isPackIntent(text) {
-			return p.handlePackIntent(notification, product, text), nil
+			return p.handlePackIntent(ctx, notification, product, text), nil
 		}
 		if p.isOrderIntent(text) {
-			return p.createOrderIntentTicket(notification, product, text), nil
+			if productSource == "text_search" {
+				// The product itself was just matched from this same message's
+				// free text (as opposed to continuing a conversation about a
+				// product already discussed) — confirm it's the right one
+				// before starting an order, rather than trusting a fuzzy text
+				// match to silently become a purchase.
+				return p.createOrderProductConfirmation(notification, product, text), nil
+			}
+			return p.createOrderIntentTicket(ctx, notification, product, text), nil
 		}
 		if p.isPriceQuery(text) {
 			return p.createProductPriceTicket(notification, product), nil
@@ -953,7 +1203,14 @@ func (p *Processor) processNotificationInternal(ctx context.Context, notificatio
 		if p.isAvailabilityQuery(text) {
 			return p.createProductAvailabilityTicket(notification, product), nil
 		}
-		return p.createProductConfirmation(notification, []map[string]interface{}{product}, "resolved"), nil
+		return p.createProductConfirmation(notification, []map[string]interface{}{product}, "resolved", text), nil
+	}
+
+	// Simple acknowledgement check — placed after product/resolution logic
+	// so that phrases like "yes, i want 2 please" are caught as order intent
+	// rather than short-circuiting to a generic "You're welcome!" reply.
+	if text != "" && p.isSimpleAcknowledgement(text) {
+		return p.createSimpleAck(notification, text), nil
 	}
 
 	if p.shouldUseAI(notification) {
@@ -986,34 +1243,234 @@ func (p *Processor) handlePreviousIntent(ctx context.Context, notification *list
 	if p.isSimpleAcknowledgement(text) && p.isAckAppropriateState(lastIntent) {
 		return p.createSimpleAck(notification, text)
 	}
-	if lastIntent == "order_intent" {
-		deliveryDetails := p.extractDeliveryDetails(text)
-		quantity := p.extractOrderQuantity(text)
-		if len(deliveryDetails) > 0 || quantity > 1 {
-			productID, _ := userData["last_product_sku"].(string)
-			if product := p.getProductBySKU(ctx, productID); product != nil {
-				return p.createResult(notification, "ask_order_confirmation", "order_details_received", map[string]interface{}{
-					"product":          product,
-					"delivery_details": deliveryDetails,
-					"quantity":         quantity,
-					"language":         p.detectLanguage(text),
-				})
-			}
+	if lastIntent == "product_availability" || lastIntent == "product_price_query" || lastIntent == "product_confirmation" {
+		// A brand-new product query ("do you have turbo wick?") must NOT reuse the
+		// previous product's sku. Re-enter the fresh pipeline instead of hijacking
+		// the last shown product into an order.
+		if p.isAvailabilityQuery(text) {
+			return nil
 		}
-		if p.isConfirmationResponse(text) {
-			productID, _ := userData["last_product_sku"].(string)
-			if product := p.getProductBySKU(ctx, productID); product != nil {
-				return p.createResult(notification, "send_order_template", "order_intent_confirmed", map[string]interface{}{
-					"product":  product,
-					"language": p.detectLanguage(text),
-				})
-			}
-		}
+		// User had a product result shown to them — "yes", "i want it", "give me 2"
+		// means they want to proceed to order, not just acknowledge.
 		if p.isRejectionResponse(text) {
-			return p.createResult(notification, "send_cancellation", "order_rejected", map[string]interface{}{
-				"language": p.detectLanguage(text),
+			// "product_confirmation" specifically means we just asked "is
+			// this the product you meant?" — a rejection here means the
+			// search matched the wrong item, so try the next-ranked match
+			// instead of just apologizing. product_availability/
+			// product_price_query rejections are different ("no thanks, not
+			// buying it") and keep the plain reply.
+			if lastIntent == "product_confirmation" {
+				return p.browseNextProductMatch(ctx, notification, userData, text)
+			}
+			lang := p.detectLanguage(text)
+			return p.createResult(notification, "send_message", "product_rejected", map[string]interface{}{
+				"reply_text": p.getTemplate(lang, "rejection"),
+				"language":   lang,
 			})
 		}
+		productID, _ := userData["last_product_sku"].(string)
+		product := p.getProductBySKU(ctx, productID)
+		if product == nil {
+			return nil
+		}
+		if p.isCompatibilityQuery(text) {
+			return p.createProductCompatibilityTicket(ctx, notification, product, text)
+		}
+		if p.isOrderStatusQuery(text) {
+			return p.createOrderStatusTicket(ctx, notification)
+		}
+		if p.isDeliveryCostQuery(text) {
+			return p.createDeliveryCostTicket(ctx, notification, text)
+		}
+		// If this product_confirmation was raised specifically to confirm an
+		// order that was expressed in one compound message ("hello, I want 10
+		// wicks, address is...") — see createOrderProductConfirmation — a
+		// "yes" here means "yes that's my product", not a fresh order phrase,
+		// and any quantity was already captured separately. Route through
+		// confirmOrderProductConfirmation instead of createOrderIntentTicket,
+		// which would otherwise re-run extractExplicitQuantity against "yes"
+		// and lose the 10, and would re-run salvage against a message that
+		// was never sent as this reply.
+		if mode, pendingQty, hasPendingQty := p.readOrderConfirmPending(userData); mode == "order_confirm_product" {
+			if p.isRejectionResponse(text) {
+				return p.createResult(notification, "send_message", "product_rejected", map[string]interface{}{
+					"reply_text": p.getTemplate(p.detectLanguage(text), "rejection"),
+					"language":   p.detectLanguage(text),
+				})
+			}
+			if p.isConfirmationResponse(text) || p.isSimpleAcknowledgement(text) || p.isOrderIntent(text) {
+				return p.confirmOrderProductConfirmation(ctx, notification, product, pendingQty, hasPendingQty, text)
+			}
+		}
+		// Any of: an explicit order phrase, a plain affirmative ("yes"/"ok"), or a
+		// simple acknowledgement all mean "proceed towards ordering this product".
+		// createOrderIntentTicket decides whether a quantity was actually stated;
+		// if it wasn't (e.g. the reply was just "yes"), it asks instead of
+		// silently assuming 1 — that silent assumption was the original bug.
+		//
+		// A bare quantity reply ("2", "two please") also counts — it has no
+		// order word in it at all, so it's caught separately via
+		// extractExplicitQuantity rather than isOrderIntent.
+		if _, hasQty := p.extractExplicitQuantity(text); p.isOrderIntent(text) || p.isConfirmationResponse(text) || p.isSimpleAcknowledgement(text) || hasQty {
+			return p.createOrderIntentTicket(ctx, notification, product, text)
+		}
+	}
+
+	if lastIntent == "order_intent" {
+		lang := p.detectLanguage(text)
+		// Let the user bail out ("cancel", "no") at any point instead of forcing
+		// them through the rest of the flow.
+		if r := p.handleOrderFlowCancellation(notification, text, lang); r != nil {
+			return r
+		}
+		// A shipping-cost question mid-checkout gets answered without losing the
+		// customer's place in the order (pending_data/last_intent untouched).
+		if r := p.handleOrderFlowSideQuery(ctx, notification, text, lang); r != nil {
+			return r
+		}
+
+		// Preserve quantity already captured during order intent (e.g. "i want two").
+		// IMPORTANT: do NOT re-extract quantity from delivery text — a phone number
+		// contains digits that would corrupt the order quantity.
+		quantity := 1
+		var existingDelivery map[string]string
+		if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+			var pdMap map[string]interface{}
+			if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+				if q, ok := pdMap["quantity"].(float64); ok && q > 0 {
+					quantity = int(q)
+				}
+				if prevDD, ok := pdMap["delivery_details"].(map[string]interface{}); ok {
+					existingDelivery = make(map[string]string)
+					for k, v := range prevDD {
+						if vs, ok := v.(string); ok && vs != "" {
+							existingDelivery[k] = vs
+						}
+					}
+				}
+			}
+		}
+
+		productID, _ := userData["last_product_sku"].(string)
+		product := p.getProductBySKU(ctx, productID)
+
+		// This is the state the system explicitly asked for delivery details in
+		// (the order template was just sent) — so, and only here, a reply is
+		// checked for a valid phone number. If found, the completeness gate
+		// passes and the *entire raw text* becomes shipping_address (below);
+		// there's no separate name/address parsing.
+		deliveryDetails := p.mergeAllDeliveryFields(text, existingDelivery)
+
+		if r := p.tryFinalizeDelivery(ctx, notification, product, quantity, deliveryDetails, text, lang); r != nil {
+			return r
+		}
+		// No valid phone yet — ask for delivery details (phone + address).
+		// Partial fields already found are stashed so the next reply can be merged.
+		if product != nil {
+			pendingData := map[string]interface{}{
+				"quantity": float64(quantity),
+			}
+			if len(deliveryDetails) > 0 {
+				pendingData["delivery_details"] = deliveryDetails
+			}
+			return p.createResult(notification, "ask_delivery_details", "awaiting_order_details", map[string]interface{}{
+				"product":          product,
+				"quantity":         quantity,
+				"pending_data":     pendingData,
+				"delivery_details": deliveryDetails,
+				"language":         lang,
+			})
+		}
+	}
+	if lastIntent == "awaiting_quantity" {
+		lang := p.detectLanguage(text)
+		if r := p.handleOrderFlowCancellation(notification, text, lang); r != nil {
+			return r
+		}
+		if r := p.handleOrderFlowSideQuery(ctx, notification, text, lang); r != nil {
+			return r
+		}
+
+		mode := "order"
+		var existingDelivery map[string]string
+		if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+			var pdMap map[string]interface{}
+			if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+				if m, ok := pdMap["mode"].(string); ok && m != "" {
+					mode = m
+				}
+				if prevDD, ok := pdMap["delivery_details"].(map[string]interface{}); ok {
+					existingDelivery = make(map[string]string)
+					for k, v := range prevDD {
+						if vs, ok := v.(string); ok && vs != "" {
+							existingDelivery[k] = vs
+						}
+					}
+				}
+			}
+		}
+
+		productID, _ := userData["last_product_sku"].(string)
+		product := p.getProductBySKU(ctx, productID)
+		if product == nil {
+			return p.createResult(notification, "ask_product_name", "product_unknown", map[string]interface{}{
+				"language": lang,
+			})
+		}
+
+		quantity, explicit := p.extractExplicitQuantity(text)
+		if !explicit {
+			// Still no usable number — re-ask rather than guessing, keeping
+			// whatever delivery details were already volunteered.
+			pendingData := map[string]interface{}{"mode": mode}
+			if len(existingDelivery) > 0 {
+				pendingData["delivery_details"] = existingDelivery
+			}
+			return p.createResult(notification, "ask_quantity", "awaiting_quantity", map[string]interface{}{
+				"product":      product,
+				"pending_data": pendingData,
+				"language":     lang,
+				"retry":        true,
+			})
+		}
+
+		if mode == "pack" {
+			return p.buildPackResult(notification, product, quantity, lang)
+		}
+
+		var stock int64
+		switch v := product["stock"].(type) {
+		case int64:
+			stock = v
+		case int:
+			stock = int64(v)
+		case float64:
+			stock = int64(v)
+		}
+		if stock < int64(quantity) {
+			return p.createResult(notification, "send_stock_warning", "insufficient_stock", map[string]interface{}{
+				"product":            product,
+				"requested_quantity": quantity,
+				"available_stock":    stock,
+				"language":           lang,
+			})
+		}
+
+		deliveryDetails := p.mergeAllDeliveryFields(text, existingDelivery)
+		if r := p.tryFinalizeDelivery(ctx, notification, product, quantity, deliveryDetails, text, lang); r != nil {
+			return r
+		}
+		pendingData := map[string]interface{}{"quantity": float64(quantity)}
+		if len(deliveryDetails) > 0 {
+			pendingData["delivery_details"] = deliveryDetails
+		}
+		return p.createResult(notification, "send_order_template", "order_intent", map[string]interface{}{
+			"product":            product,
+			"suggested_quantity": quantity,
+			"pending_data":       pendingData,
+			"language":           lang,
+			"shipping_options":   p.getShippingOptions(ctx),
+		})
 	}
 	if lastIntent == "multiple_products_found" {
 		if matches := p.searchProductsByText(ctx, text, notification.PlatformID); len(matches) == 1 {
@@ -1029,43 +1486,358 @@ func (p *Processor) handlePreviousIntent(ctx context.Context, notification *list
 			}
 			switch {
 			case p.isPackIntent(originalText):
-				return p.handlePackIntent(notification, product, originalText)
+				return p.handlePackIntent(ctx, notification, product, originalText)
 			case p.isOrderIntent(originalText):
-				return p.createOrderIntentTicket(notification, product, originalText)
+				return p.createOrderIntentTicket(ctx, notification, product, originalText)
 			case p.isPriceQuery(originalText):
 				return p.createProductPriceTicket(notification, product)
 			case p.isAvailabilityQuery(originalText):
 				return p.createProductAvailabilityTicket(notification, product)
 			default:
-				return p.createProductConfirmation(notification, []map[string]interface{}{product}, "resolved")
+				return p.createProductConfirmation(notification, []map[string]interface{}{product}, "resolved", originalText)
 			}
 		}
 	}
+	if lastIntent == "awaiting_order_details" {
+		lang := p.detectLanguage(text)
+		// This state previously had NO cancellation check at all — a user typing
+		// "actually cancel this" while providing delivery details would have that
+		// message run through address-salvaging (finding nothing usable) and just
+		// get re-asked for the same missing fields, with their cancellation
+		// silently ignored. Fixed by checking first, like every other order state.
+		if r := p.handleOrderFlowCancellation(notification, text, lang); r != nil {
+			return r
+		}
+		if r := p.handleOrderFlowSideQuery(ctx, notification, text, lang); r != nil {
+			return r
+		}
+
+		// User sent delivery details — accumulate partial info from pending_data,
+		// then only proceed to final confirmation once name + phone + address are complete.
+		quantity := 1
+		loadedPendingQuantity := false
+		var existing map[string]string
+
+		// Load any previously-stashed partial delivery details
+		if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+			var pdMap map[string]interface{}
+			if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+				if q, ok := pdMap["quantity"].(float64); ok && q > 0 {
+					quantity = int(q)
+					loadedPendingQuantity = true
+				}
+				if prevDD, ok := pdMap["delivery_details"].(map[string]interface{}); ok {
+					existing = make(map[string]string)
+					for k, v := range prevDD {
+						if vs, ok := v.(string); ok && vs != "" {
+							existing[k] = vs
+						}
+					}
+				}
+			}
+		}
+		// Also the explicit "waiting for delivery details" state (a follow-up
+		// after the order template) — check this reply for a phone number and
+		// merge with whatever was already found across earlier partial replies.
+		deliveryDetails := p.mergeAllDeliveryFields(text, existing)
+
+		// Accumulate the full raw paragraph the user sent across partial
+		// messages ("Ahmad", then "07343434", then "Baghdad") so the final
+		// shipping_address / customer_notes capture everything, not just the
+		// last message.
+		rawText := text
+		if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+			var pdMap map[string]interface{}
+			if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+				if prevRaw, ok := pdMap["raw_text"].(string); ok && prevRaw != "" {
+					rawText = prevRaw + " " + text
+				}
+			}
+		}
+
+		// IMPORTANT: do not re-extract quantity from delivery text. A phone
+		// number or house number would corrupt the order quantity. Only update
+		// quantity if no phone was detected in this reply AND the user clearly
+		// stated a new quantity (e.g. "actually make it 5").
+		if !loadedPendingQuantity {
+			hasDeliveryInfo := deliveryDetails["phone"] != ""
+			if !hasDeliveryInfo {
+				if extractedQuantity, explicit := p.extractExplicitQuantity(text); explicit {
+					quantity = extractedQuantity
+				}
+			}
+		}
+
+		productID, _ := userData["last_product_sku"].(string)
+		product := p.getProductBySKU(ctx, productID)
+		if product == nil {
+			return p.createResult(notification, "ask_product_name", "product_unknown", map[string]interface{}{
+				"language": lang,
+			})
+		}
+
+		if r := p.tryFinalizeDelivery(ctx, notification, product, quantity, deliveryDetails, rawText, lang); r != nil {
+			return r
+		}
+
+		// Missing one or more fields — re-ask for only what's missing.
+		missing := map[string]bool{}
+		if deliveryDetails["phone"] == "" {
+			missing["phone"] = true
+		}
+		if deliveryDetails["name"] == "" {
+			missing["name"] = true
+		}
+		if deliveryDetails["address"] == "" {
+			missing["address"] = true
+		}
+		reason := p.deliveryDetailsPrompt(deliveryDetails, lang, missing)
+		pendingData := map[string]interface{}{
+			"quantity":         float64(quantity),
+			"delivery_details": deliveryDetails,
+			"raw_text":         rawText,
+		}
+		return p.createResult(notification, "ask_delivery_details", "awaiting_order_details", map[string]interface{}{
+			"product":          product,
+			"quantity":         quantity,
+			"pending_data":     pendingData,
+			"delivery_details": deliveryDetails,
+			"prompt":           reason,
+			"language":         lang,
+		})
+	}
 	if lastIntent == "awaiting_confirmation" {
-		if p.isConfirmationResponse(text) {
+		lang := p.detectLanguage(text)
+
+		// A shipping-cost question asked right at the confirmation step gets
+		// answered without discarding the pending order.
+		if r := p.handleOrderFlowSideQuery(ctx, notification, text, lang); r != nil {
+			return r
+		}
+
+		if p.isChangeDetailsRequest(text) {
+			// User wants to change the shipping address before confirming —
+			// send them back to delivery-details collection with a clean slate
+			// (old partials are cleared so the new address replaces them).
 			productID, _ := userData["last_product_sku"].(string)
-			if product := p.getProductBySKU(ctx, productID); product != nil {
-				return p.createResult(notification, "ask_for_order", "product_confirmed", map[string]interface{}{
-					"product":  product,
-					"language": p.detectLanguage(text),
+			product := p.getProductBySKU(ctx, productID)
+			if product != nil {
+				quantity := 1
+				if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+					var pdMap map[string]interface{}
+					if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+						if q, ok := pdMap["quantity"].(float64); ok && q > 0 {
+							quantity = int(q)
+						}
+					}
+				}
+				return p.createResult(notification, "ask_delivery_details", "awaiting_order_details", map[string]interface{}{
+					"product":            product,
+					"quantity":           quantity,
+					"clear_pending_data": true,
+					"language":           lang,
 				})
 			}
 		}
-		if p.isRejectionResponse(text) {
-			lang := p.detectLanguage(text)
+		if p.isConfirmationResponse(text) {
+			productID, _ := userData["last_product_sku"].(string)
+			quantity := 1
+			var shippingCity string
+			var shippingCost float64
+			if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+				var pdMap map[string]interface{}
+				if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+					if q, ok := pdMap["quantity"].(float64); ok {
+						quantity = int(q)
+					}
+					if sc, ok := pdMap["shipping_city"].(string); ok {
+						shippingCity = sc
+					}
+					if sc, ok := pdMap["shipping_cost"].(float64); ok {
+						shippingCost = sc
+					}
+				}
+			}
+			if product := p.getProductBySKU(ctx, productID); product != nil {
+				// Create order in DB — total includes the shipping cost that was
+				// already shown to the customer at confirmation time, so the
+				// charged amount and the quoted amount always match.
+				orderID, err := p.createOrderInDB(ctx, notification, userData, product, quantity, shippingCity, shippingCost)
+				if err != nil {
+					if errors.Is(err, errInsufficientStock) {
+						// Stock ran out between the quote and the confirmation —
+						// tell the customer plainly instead of a generic failure.
+						var stock int64
+						switch v := product["stock"].(type) {
+						case int64:
+							stock = v
+						case int:
+							stock = int64(v)
+						case float64:
+							stock = int64(v)
+						}
+						return p.createResult(notification, "send_stock_warning", "insufficient_stock", map[string]interface{}{
+							"product":            product,
+							"requested_quantity": quantity,
+							"available_stock":    stock,
+							"clear_pending_data": true,
+							"language":           lang,
+						})
+					}
+					log.Printf("[Processor] Failed to create order in DB: %v", err)
+					return p.createResult(notification, "send_message", "order_failed", map[string]interface{}{
+						"reply_text": "Sorry, there was an issue creating your order. Please try again.",
+						"language":   lang,
+					})
+				}
+				data := map[string]interface{}{
+					"order_id":           orderID,
+					"product":            product,
+					"quantity":           quantity,
+					"clear_pending_data": true,
+					"language":           lang,
+				}
+				if shippingCity != "" {
+					data["shipping_city"] = shippingCity
+					data["shipping_cost"] = shippingCost
+				}
+				return p.createResult(notification, "order_created", "order_completed", data)
+			}
+		}
+		if p.isCancellationIntent(text) || p.isRejectionResponse(text) {
+			// Cancel the most recent order in DB (any status — we need to
+			// see 'shipped'/'delivered' too, specifically to refuse those)
+			// and release any stock that was reserved for it.
+			userID := p.getUserID(notification)
+			if userID != "" {
+				var internalID string
+				err := p.db.QueryRowContext(ctx, `SELECT id FROM platform_users WHERE platform = ? AND platform_user_id = ?`,
+					notification.PlatformID, userID).Scan(&internalID)
+				if err == nil && internalID != "" {
+					var orderID, status string
+					var total float64
+					err = p.db.QueryRowContext(ctx,
+						`SELECT id, status, total FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+						internalID).Scan(&orderID, &status, &total)
+					if err == nil && orderID != "" {
+						// Rule: an order that has already shipped is
+						// uncancelable — leave it untouched and tell the
+						// customer honestly instead of confirming a
+						// cancellation that didn't happen.
+						if status == "shipped" || status == "delivered" {
+							return p.createResult(notification, "send_message", "order_uncancelable", map[string]interface{}{
+								"reply_text":         "This order has already shipped and can no longer be cancelled. Please contact us about a return instead.",
+								"order_id":           orderID,
+								"clear_pending_data": true,
+								"language":           lang,
+							})
+						}
+						if status == "pending" || status == "confirmed" || status == "processing" {
+							var productID string
+							var qty int
+							_ = p.db.QueryRowContext(ctx, `SELECT product_id, quantity FROM order_items WHERE order_id = ? LIMIT 1`, orderID).Scan(&productID, &qty)
+							_, _ = p.db.ExecContext(ctx, `UPDATE orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, orderID)
+							if productID != "" {
+								_, _ = p.db.ExecContext(ctx, `UPDATE products SET reserved_stock = MAX(0, reserved_stock - ?) WHERE id = ?`, qty, productID)
+							}
+							_, _ = p.db.ExecContext(ctx, `UPDATE platform_users SET total_orders = MAX(0, total_orders - 1), total_spent = MAX(0, total_spent - ?), last_active = CURRENT_TIMESTAMP WHERE id = ?`, total, internalID)
+							log.Printf("[Processor] Order %s cancelled for user %s", orderID, internalID)
+							return p.createResult(notification, "send_message", "order_cancelled", map[string]interface{}{
+								"reply_text":         "Your order has been cancelled.",
+								"order_id":           orderID,
+								"clear_pending_data": true,
+								"language":           lang,
+							})
+						}
+						// already cancelled/refunded — fall through to the
+						// generic reply below rather than re-cancelling.
+					}
+				}
+			}
 			return p.createResult(notification, "send_message", "product_rejected", map[string]interface{}{
-				"reply_text": p.getTemplate(lang, "rejection"),
-				"language":   lang,
+				"reply_text":         p.getTemplate(lang, "rejection"),
+				"clear_pending_data": true,
+				"language":           lang,
 			})
+		}
+
+		// Nothing recognized (change/confirm/cancel/side question) — re-show
+		// the same confirmation instead of silently falling through to the
+		// generic message pipeline. Falling through used to overwrite
+		// last_intent/conversation_state with whatever the fresh classifier
+		// guessed, which could drop the customer out of a fully-collected,
+		// one-reply-from-done order with no warning.
+		if r := p.rebuildConfirmationPrompt(ctx, notification, userData, lang); r != nil {
+			return r
 		}
 	}
 	return nil
 }
 
+// rebuildConfirmationPrompt re-issues the same order-confirmation summary
+// when a reply during awaiting_confirmation didn't match CONFIRM/CHANGE/
+// CANCEL or a recognized side question. It reconstructs the summary from
+// pending_data (already persisted from the original prompt) rather than
+// guessing, so the customer sees exactly what they saw before along with a
+// clarifying nudge, instead of the conversation silently reverting to a
+// fresh, contextless state.
+func (p *Processor) rebuildConfirmationPrompt(ctx context.Context, notification *listener.Notification, userData map[string]interface{}, lang string) *ProcessResult {
+	productID, _ := userData["last_product_sku"].(string)
+	product := p.getProductBySKU(ctx, productID)
+	if product == nil {
+		return nil
+	}
+	quantity := 1
+	var deliveryDetails map[string]string
+	var rawText string
+	var shippingCity string
+	var shippingCost float64
+	if pd, ok := userData["pending_data"].(string); ok && pd != "" {
+		var pdMap map[string]interface{}
+		if err := json.Unmarshal([]byte(pd), &pdMap); err == nil {
+			if q, ok := pdMap["quantity"].(float64); ok && q > 0 {
+				quantity = int(q)
+			}
+			if dd, ok := pdMap["delivery_details"].(map[string]interface{}); ok {
+				deliveryDetails = map[string]string{}
+				for k, v := range dd {
+					if vs, ok := v.(string); ok {
+						deliveryDetails[k] = vs
+					}
+				}
+			}
+			if rt, ok := pdMap["raw_text"].(string); ok {
+				rawText = rt
+			}
+			if sc, ok := pdMap["shipping_city"].(string); ok {
+				shippingCity = sc
+			}
+			if sc, ok := pdMap["shipping_cost"].(float64); ok {
+				shippingCost = sc
+			}
+		}
+	}
+	data := map[string]interface{}{
+		"product":          product,
+		"delivery_details": deliveryDetails,
+		"shipping_address": rawText,
+		"quantity":         quantity,
+		"language":         lang,
+		"clarify_retry":    true,
+	}
+	if shippingCity != "" {
+		data["shipping_city"] = shippingCity
+		data["shipping_cost"] = shippingCost
+	}
+	// Deliberately no "pending_data" key here: commitTicketResult leaves the
+	// pending_data column untouched when it's absent (and this intent isn't a
+	// browsing intent), so the already-collected order details persist as-is.
+	return p.createResult(notification, "ask_order_confirmation", "order_details_received", data)
+}
+
 func (p *Processor) isAckAppropriateState(lastIntent string) bool {
 	switch lastIntent {
-	case "greeting", "order_intent", "awaiting_confirmation",
-		"store_info", "product_price_query", "product_availability", "order_completed":
+	case "greeting", "store_info":
 		return true
 	}
 	return false
@@ -1140,9 +1912,205 @@ func (p *Processor) createProductAvailabilityTicket(notification *listener.Notif
 	return p.createResult(notification, "send_product", "product_availability", map[string]interface{}{"product": product})
 }
 
-func (p *Processor) createOrderIntentTicket(notification *listener.Notification, product map[string]interface{}, text string) *ProcessResult {
-	quantity := p.extractOrderQuantity(text)
+// getShippingOptions returns every city+cost pair from the shipping table.
+// Centralized here because the same query used to be copy-pasted inline in
+// two separate places in handlePreviousIntent (each slightly out of sync with
+// the other), and its result was never actually read by the compiler either.
+func (p *Processor) getShippingOptions(ctx context.Context) []map[string]interface{} {
+	opts := []map[string]interface{}{}
+	if p.db == nil {
+		return opts
+	}
+	rows, err := p.db.QueryContext(ctx, "SELECT city, cost FROM shipping ORDER BY city")
+	if err != nil {
+		log.Printf("[Processor] getShippingOptions query error: %v", err)
+		return opts
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var city string
+		var cost float64
+		if err := rows.Scan(&city, &cost); err == nil {
+			opts = append(opts, map[string]interface{}{"city": city, "cost": cost})
+		}
+	}
+	return opts
+}
+
+// matchShippingCity looks for a shipping-table city named somewhere in the
+// given text (typically the customer's delivery address) and returns its
+// cost. This is how the order total, the order-confirmation message, and the
+// final receipt all agree on the delivery charge.
+func (p *Processor) matchShippingCity(ctx context.Context, text string) (city string, cost float64, found bool) {
+	if strings.TrimSpace(text) == "" {
+		return "", 0, false
+	}
+	lower := strings.ToLower(text)
+	for _, o := range p.getShippingOptions(ctx) {
+		c, _ := o["city"].(string)
+		if c == "" {
+			continue
+		}
+		if containsWholeWordPhrase(lower, strings.ToLower(c)) {
+			cst, _ := o["cost"].(float64)
+			return c, cst, true
+		}
+	}
+	return "", 0, false
+}
+
+// createDeliveryCostTicket answers a standalone "how much is delivery?"
+// question directly from the shipping table — the specific city's cost if
+// one was mentioned, or the full rate list otherwise.
+func (p *Processor) createDeliveryCostTicket(ctx context.Context, notification *listener.Notification, text string) *ProcessResult {
 	lang := p.detectLanguage(text)
+	city, cost, found := p.matchShippingCity(ctx, text)
+	return p.createResult(notification, "send_delivery_cost", "delivery_cost_query", map[string]interface{}{
+		"matched_city":     city,
+		"matched_cost":     cost,
+		"matched":          found,
+		"shipping_options": p.getShippingOptions(ctx),
+		"language":         lang,
+	})
+}
+
+// mergeAllDeliveryFields merges a phone number found in this reply with
+// whatever was already collected ("new reply wins" for phone). Only the
+// phone-completeness check matters here — there's no separate name/address
+// extraction. The full accumulated raw text (handled separately by callers
+// via pending_data["raw_text"]) is what actually gets stored as
+// shipping_address; this function only decides whether we've seen a valid
+// phone number yet.
+func (p *Processor) mergeAllDeliveryFields(text string, existing map[string]string) map[string]string {
+	return p.mergeDeliveryText(text, existing)
+}
+
+// tryFinalizeDelivery returns a ready "ask_order_confirmation" ticket once
+// delivery details are complete (per hasCompleteDelivery), including a
+// shipping cost looked up from the shipping table when the address matches a
+// known city. Returns nil if delivery info is still incomplete, so the caller
+// decides how to ask for what's missing.
+func (p *Processor) tryFinalizeDelivery(ctx context.Context, notification *listener.Notification, product map[string]interface{}, quantity int, deliveryDetails map[string]string, rawText, lang string) *ProcessResult {
+	if product == nil || !hasCompleteDelivery(deliveryDetails) {
+		return nil
+	}
+	city, cost, found := p.matchShippingCity(ctx, rawText)
+	fullDetails := map[string]interface{}{
+		"delivery_details": deliveryDetails,
+		"quantity":         float64(quantity),
+		"raw_text":         rawText,
+	}
+	data := map[string]interface{}{
+		"product":          product,
+		"pending_data":     fullDetails,
+		"delivery_details": deliveryDetails,
+		"shipping_address": rawText,
+		"quantity":         quantity,
+		"language":         lang,
+		"shipping_options": p.getShippingOptions(ctx),
+	}
+	if found {
+		fullDetails["shipping_city"] = city
+		fullDetails["shipping_cost"] = cost
+		data["shipping_city"] = city
+		data["shipping_cost"] = cost
+	}
+	return p.createResult(notification, "ask_order_confirmation", "order_details_received", data)
+}
+
+// handleOrderFlowCancellation lets the user bail out of an in-progress order
+// at any step ("cancel", "no", "stop") instead of forcing them to either
+// finish the flow or send something that happens to parse as a field. This is
+// checked at the top of every order-related state below.
+func (p *Processor) handleOrderFlowCancellation(notification *listener.Notification, text, lang string) *ProcessResult {
+	if p.isCancellationIntent(text) || p.isRejectionResponse(text) {
+		return p.createResult(notification, "send_cancellation", "order_rejected", map[string]interface{}{
+			"language":           lang,
+			"clear_pending_data": true,
+		})
+	}
+	return nil
+}
+
+// handleOrderFlowSideQuery answers a shipping-cost question asked in the
+// middle of checkout (e.g. right after being asked for an address) WITHOUT
+// losing the customer's place in the order. The preserve_prior_state flag
+// tells commitTicketResult to leave last_intent/conversation_state/pending_data
+// untouched, so the very next message is still handled by the same
+// in-progress state as before this question was asked.
+func (p *Processor) handleOrderFlowSideQuery(ctx context.Context, notification *listener.Notification, text, lang string) *ProcessResult {
+	if p.isDeliveryCostQuery(text) {
+		result := p.createDeliveryCostTicket(ctx, notification, text)
+		result.Data["preserve_prior_state"] = true
+		return result
+	}
+	if p.isOrderStatusQuery(text) {
+		result := p.createOrderStatusTicket(ctx, notification)
+		result.Data["preserve_prior_state"] = true
+		return result
+	}
+	return nil
+}
+
+// createOrderProductConfirmation asks "is this your product?" before
+// starting an order that was expressed in the same message where the
+// product itself was matched from free text (e.g. "hello, I want 10 wicks,
+// address is..."). A fuzzy text match shouldn't silently become an order.
+// The quantity, if explicitly stated, is preserved so the customer isn't
+// asked to repeat it after confirming — but any delivery details bundled
+// into that same message are deliberately NOT carried forward. Once
+// confirmed, confirmOrderProductConfirmation always sends the standard
+// "send your delivery details" prompt and waits for the customer's actual
+// reply to it, rather than trusting a parsed guess at what they meant by
+// "address" or a phone-looking number in free text.
+func (p *Processor) createOrderProductConfirmation(notification *listener.Notification, product map[string]interface{}, text string) *ProcessResult {
+	pending := map[string]interface{}{"mode": "order_confirm_product"}
+	if qty, ok := p.extractExplicitQuantity(text); ok {
+		pending["quantity"] = float64(qty)
+	}
+	return p.createResult(notification, "ask_product_confirmation", "product_confirmation", map[string]interface{}{
+		"product":      product,
+		"source":       "resolved",
+		"pending_data": pending,
+	})
+}
+
+// readOrderConfirmPending decodes the pending_data JSON left by
+// createOrderProductConfirmation, so a follow-up "yes" can resume the order
+// using the quantity that was already stated, instead of re-parsing it out
+// of a bare confirmation reply like "yes" (which has no number in it at all).
+func (p *Processor) readOrderConfirmPending(userData map[string]interface{}) (mode string, quantity int, hasQuantity bool) {
+	pd, ok := userData["pending_data"].(string)
+	if !ok || pd == "" {
+		return "", 0, false
+	}
+	var pdMap map[string]interface{}
+	if err := json.Unmarshal([]byte(pd), &pdMap); err != nil {
+		return "", 0, false
+	}
+	mode, _ = pdMap["mode"].(string)
+	if q, ok := pdMap["quantity"].(float64); ok && q > 0 {
+		return mode, int(q), true
+	}
+	return mode, 0, false
+}
+
+// confirmOrderProductConfirmation resumes an order after the customer
+// confirmed "yes, that's my product" following createOrderProductConfirmation.
+// It deliberately does NOT reuse createOrderIntentTicket's salvage/
+// tryFinalizeDelivery shortcut — even if the original compound message
+// looked like it contained an address/phone/name, this always sends the
+// customer the standard delivery-details prompt and waits for a real reply
+// to it before anything is treated as confirmed.
+func (p *Processor) confirmOrderProductConfirmation(ctx context.Context, notification *listener.Notification, product map[string]interface{}, quantity int, hasQuantity bool, text string) *ProcessResult {
+	lang := p.detectLanguage(text)
+	if !hasQuantity {
+		return p.createResult(notification, "ask_quantity", "awaiting_quantity", map[string]interface{}{
+			"product":      product,
+			"pending_data": map[string]interface{}{"mode": "order"},
+			"language":     lang,
+		})
+	}
 	var stock int64
 	switch v := product["stock"].(type) {
 	case int64:
@@ -1163,14 +2131,180 @@ func (p *Processor) createOrderIntentTicket(notification *listener.Notification,
 	return p.createResult(notification, "send_order_template", "order_intent", map[string]interface{}{
 		"product":            product,
 		"suggested_quantity": quantity,
+		"pending_data":       map[string]interface{}{"quantity": float64(quantity)},
 		"language":           lang,
+		"shipping_options":   p.getShippingOptions(ctx),
 	})
 }
 
-func (p *Processor) createProductConfirmation(notification *listener.Notification, products []map[string]interface{}, source string) *ProcessResult {
-	return p.createResult(notification, "ask_product", "product_confirmation", map[string]interface{}{
-		"products": products,
-		"source":   source,
+func (p *Processor) createOrderIntentTicket(ctx context.Context, notification *listener.Notification, product map[string]interface{}, text string) *ProcessResult {
+	lang := p.detectLanguage(text)
+
+	quantity, explicitQty := p.extractExplicitQuantity(text)
+
+	if !explicitQty {
+		// The user never actually stated a quantity ("I want it", "give me the
+		// shampoo"). Ask instead of silently ordering 1 — that silent default
+		// was the original bug: a full order template (with a made-up quantity
+		// and total) used to be sent before the user had said how many they
+		// wanted.
+		return p.createResult(notification, "ask_quantity", "awaiting_quantity", map[string]interface{}{
+			"product":      product,
+			"pending_data": map[string]interface{}{"mode": "order"},
+			"language":     lang,
+		})
+	}
+
+	var stock int64
+	switch v := product["stock"].(type) {
+	case int64:
+		stock = v
+	case int:
+		stock = int64(v)
+	case float64:
+		stock = int64(v)
+	}
+	if stock < int64(quantity) {
+		return p.createResult(notification, "send_stock_warning", "insufficient_stock", map[string]interface{}{
+			"product":            product,
+			"requested_quantity": quantity,
+			"available_stock":    stock,
+			"language":           lang,
+		})
+	}
+
+	// Deliberately do NOT try to parse delivery details out of this message,
+	// even if it also contains something that looks like an address/phone
+	// ("I want 10 wicks for [address+number+name]"). Delivery-detail
+	// extraction only ever runs once the system has explicitly asked for it
+	// (the order_intent / awaiting_order_details states below) — not here,
+	// on the message that merely expressed the order intent itself.
+	return p.createResult(notification, "send_order_template", "order_intent", map[string]interface{}{
+		"product":            product,
+		"suggested_quantity": quantity,
+		"pending_data":       map[string]interface{}{"quantity": float64(quantity)},
+		"language":           lang,
+		"shipping_options":   p.getShippingOptions(ctx),
+	})
+}
+
+// createProductConfirmation asks "is this your product?" for a single
+// confident match. originalText is the query that produced the match — it's
+// stashed in pending_data (mode "product_browse") so that if the customer
+// rejects this match ("not this", "wrong one"), browseNextProductMatch can
+// re-run the same search and offer the next-ranked result instead of just
+// apologizing. attempt starts at 1 (this is the first product shown for this
+// query).
+func (p *Processor) createProductConfirmation(notification *listener.Notification, products []map[string]interface{}, source string, originalText string) *ProcessResult {
+	if len(products) == 0 {
+		return p.askForProductName(notification)
+	}
+	if len(products) > 1 {
+		return p.createClarificationTicket(notification, products, p.getNotificationText(notification))
+	}
+	// Exactly one resolved product: confirm it by name/price instead of
+	// asking "what product?" again — action "ask_product" ignores the
+	// resolved product entirely and re-prompts for a name, which is wrong
+	// when we already have a confident single match.
+	pending := map[string]interface{}{"mode": "product_browse", "attempt": 1}
+	if originalText != "" {
+		pending["original_text"] = originalText
+	}
+	return p.createResult(notification, "ask_product_confirmation", "product_confirmation", map[string]interface{}{
+		"product":      products[0],
+		"source":       source,
+		"pending_data": pending,
+	})
+}
+
+// readBrowsePending decodes the pending_data left by createProductConfirmation
+// (mode "product_browse"), returning the original search query and how many
+// products have been shown for it so far. Returns ok=false if the pending
+// state isn't a browse state (e.g. it belongs to a different flow like
+// order_confirm_product, or there's nothing stashed at all), so callers know
+// to fall back to a plain rejection reply instead of trying to re-search.
+func (p *Processor) readBrowsePending(userData map[string]interface{}) (originalText string, attempt int, ok bool) {
+	pd, has := userData["pending_data"].(string)
+	if !has || pd == "" {
+		return "", 0, false
+	}
+	var pdMap map[string]interface{}
+	if err := json.Unmarshal([]byte(pd), &pdMap); err != nil {
+		return "", 0, false
+	}
+	if mode, _ := pdMap["mode"].(string); mode != "product_browse" {
+		return "", 0, false
+	}
+	originalText, _ = pdMap["original_text"].(string)
+	if originalText == "" {
+		return "", 0, false
+	}
+	attempt = 1
+	if a, isNum := pdMap["attempt"].(float64); isNum && a > 0 {
+		attempt = int(a)
+	}
+	return originalText, attempt, true
+}
+
+// maxProductBrowseAttempts caps how many candidate products we'll offer in a
+// row for the same query before giving up and escalating to a human. The
+// first match is attempt 1; a rejection there tries the 2nd-ranked result
+// (attempt 2), a second rejection tries the 3rd-ranked result (attempt 3). A
+// rejection at attempt 3 (or running out of matches earlier) escalates.
+const maxProductBrowseAttempts = 3
+
+// browseNextProductMatch handles a rejection ("not this", "wrong one") of a
+// product shown via createProductConfirmation. It re-runs the original
+// search and offers the next-ranked candidate. Once maxProductBrowseAttempts
+// candidates have all been rejected — or the search simply doesn't have
+// another candidate to offer — it gives up and escalates to a human via
+// escalateFailedBrowse instead of continuing to guess.
+func (p *Processor) browseNextProductMatch(ctx context.Context, notification *listener.Notification, userData map[string]interface{}, text string) *ProcessResult {
+	lang := p.detectLanguage(text)
+	originalText, attempt, ok := p.readBrowsePending(userData)
+	if !ok {
+		// Nothing to retry against (product came from an image match, SKU
+		// continuation, etc.) — fall back to the old plain reply.
+		return p.createResult(notification, "send_message", "product_rejected", map[string]interface{}{
+			"reply_text": p.getTemplate(lang, "rejection"),
+			"language":   lang,
+		})
+	}
+	if attempt >= maxProductBrowseAttempts {
+		return p.escalateFailedBrowse(notification, originalText, lang)
+	}
+	matches := p.searchProductsByText(ctx, originalText, notification.PlatformID)
+	nextIndex := attempt // matches[0..attempt-1] have already been shown/rejected
+	if nextIndex >= len(matches) {
+		return p.escalateFailedBrowse(notification, originalText, lang)
+	}
+	next := matches[nextIndex]
+	return p.createResult(notification, "ask_product_confirmation", "product_confirmation", map[string]interface{}{
+		"product": next,
+		"source":  "browse_retry",
+		"pending_data": map[string]interface{}{
+			"mode":          "product_browse",
+			"original_text": originalText,
+			"attempt":       attempt + 1,
+		},
+	})
+}
+
+// escalateFailedBrowse is reached once the customer has rejected every
+// candidate we could find for their query. Rather than keep guessing (or
+// leaving them with just a generic "no problem"), it sends the standard
+// fallback message and files an urgent_messages row so a human follows up —
+// three misses in a row on the same query usually means the catalog doesn't
+// have a clean match, or the search just isn't finding what they mean.
+func (p *Processor) escalateFailedBrowse(notification *listener.Notification, originalText, lang string) *ProcessResult {
+	if err := p.insertUrgentMessage(notification, "product_browse_exhausted",
+		fmt.Sprintf("Customer rejected every match found for query %q — needs manual product help.", originalText)); err != nil {
+		log.Printf("[Processor] failed to insert urgent message for exhausted browse (notification=%s): %v", notification.ID, err)
+	}
+	return p.createResult(notification, "send_fallback", "product_browse_exhausted", map[string]interface{}{
+		"language":           lang,
+		"original_text":      originalText,
+		"clear_pending_data": true,
 	})
 }
 
@@ -1257,11 +2391,42 @@ func (p *Processor) isPackIntent(text string) bool {
 	return false
 }
 
-func (p *Processor) extractPackQuantity(text string) int {
-	return p.extractOrderQuantity(text)
+// buildPackResult creates the pack-price ticket once the pack count is known
+// — factored out so both handlePackIntent (count stated immediately) and the
+// awaiting_quantity follow-up (count given in a later reply) share the exact
+// same math.
+func (p *Processor) buildPackResult(notification *listener.Notification, product map[string]interface{}, packCount int, lang string) *ProcessResult {
+	var qtyPerPack int64
+	switch v := product["quantity_per_pack"].(type) {
+	case int64:
+		qtyPerPack = v
+	case int:
+		qtyPerPack = int64(v)
+	case float64:
+		qtyPerPack = int64(v)
+	}
+	var pricePerPack float64
+	switch v := product["price_per_pack"].(type) {
+	case float64:
+		pricePerPack = v
+	case int64:
+		pricePerPack = float64(v)
+	}
+	currency, _ := product["currency"].(string)
+	totalPrice := float64(packCount) * pricePerPack
+	return p.createResultNoImageDelete(notification, "pack_price", "pack_inquiry", map[string]interface{}{
+		"product":        product,
+		"pack_count":     packCount,
+		"items_per_pack": qtyPerPack,
+		"price_per_pack": pricePerPack,
+		"total_price":    totalPrice,
+		"currency":       currency,
+		"language":       lang,
+	})
 }
 
-func (p *Processor) handlePackIntent(notification *listener.Notification, product map[string]interface{}, text string) *ProcessResult {
+func (p *Processor) handlePackIntent(ctx context.Context, notification *listener.Notification, product map[string]interface{}, text string) *ProcessResult {
+	lang := p.detectLanguage(text)
 	var qtyPerPack int64
 	switch v := product["quantity_per_pack"].(type) {
 	case int64:
@@ -1273,30 +2438,20 @@ func (p *Processor) handlePackIntent(notification *listener.Notification, produc
 	}
 
 	if qtyPerPack <= 1 {
-		return p.createOrderIntentTicket(notification, product, text)
+		return p.createOrderIntentTicket(ctx, notification, product, text)
 	}
 
-	var pricePerPack float64
-	switch v := product["price_per_pack"].(type) {
-	case float64:
-		pricePerPack = v
-	case int64:
-		pricePerPack = float64(v)
+	packCount, explicit := p.extractExplicitQuantity(text)
+	if !explicit {
+		// Same fix as the single-item flow: don't silently assume "1 box" —
+		// ask how many, the same way an unstated single-item quantity is asked.
+		return p.createResult(notification, "ask_quantity", "awaiting_quantity", map[string]interface{}{
+			"product":      product,
+			"pending_data": map[string]interface{}{"mode": "pack"},
+			"language":     lang,
+		})
 	}
-
-	currency, _ := product["currency"].(string)
-	packCount := p.extractPackQuantity(text)
-	totalPrice := float64(packCount) * pricePerPack
-
-	return p.createResultNoImageDelete(notification, "pack_price", "pack_inquiry", map[string]interface{}{
-		"product":        product,
-		"pack_count":     packCount,
-		"items_per_pack": qtyPerPack,
-		"price_per_pack": pricePerPack,
-		"total_price":    totalPrice,
-		"currency":       currency,
-		"language":       p.detectLanguage(text),
-	})
+	return p.buildPackResult(notification, product, packCount, lang)
 }
 
 func (p *Processor) createClarificationTicket(notification *listener.Notification, matches []map[string]interface{}, originalText string) *ProcessResult {
@@ -1514,6 +2669,19 @@ func (p *Processor) insertUrgentMessage(notification *listener.Notification, msg
 
 func (p *Processor) isSimpleAcknowledgement(text string) bool {
 	t := strings.TrimSpace(strings.ToLower(text))
+	// If text contains order-related keywords, it's NOT a simple ack —
+	// it may be an order intent that needs further processing.
+	orderKeywords := []string{
+		"want", "buy", "purchase", "order", "get",
+		"i need", "i'll take", "gimme", "give me",
+		"أريد", "اشتري", "طلب", "شراء",
+		"دەمەوێت", "بکڕم", "داوا", "کڕین",
+	}
+	for _, kw := range orderKeywords {
+		if strings.Contains(t, kw) {
+			return false
+		}
+	}
 	words := []string{
 		"ok", "okay", "thanks", "thank you", "thx", "cool", "great", "yes", "sure",
 		"appreciate", "nice", "perfect", "good",
@@ -1522,6 +2690,12 @@ func (p *Processor) isSimpleAcknowledgement(text string) bool {
 	}
 	for _, w := range words {
 		if t == w || strings.HasPrefix(t, w+" ") {
+			// Also reject if text includes a quantity — either digits ("2") or a
+			// spelled-out number word ("two", "اثنين", "دوو") — since that means
+			// the user is answering a quantity question, not just acknowledging.
+			if _, explicit := p.extractExplicitQuantity(t); explicit {
+				return false
+			}
 			return true
 		}
 	}
@@ -1657,6 +2831,13 @@ func (p *Processor) shouldAutoHeart(notification *listener.Notification) bool {
 }
 
 func (p *Processor) shouldAutoReply(notification *listener.Notification) bool {
+	// Sandbox notifications always auto-reply regardless of config.
+	if notification.RawData != nil {
+		if sandbox, _ := notification.RawData["sandbox"].(bool); sandbox {
+			return true
+		}
+	}
+
 	cfg := p.config.GetConfig()
 	if cfg == nil {
 		return false
@@ -1665,6 +2846,24 @@ func (p *Processor) shouldAutoReply(notification *listener.Notification) bool {
 	if !ok {
 		return false
 	}
+
+	// Check subtype-level automation first (dashboard saves per-subtype).
+	// Falls back to platform-level automation if no subtype match.
+	if notification.SubtypeID != "" {
+		for _, sub := range pc.Subtypes {
+			if sub.ID == notification.SubtypeID {
+				switch notification.Type {
+				case listener.NotificationTypeMessage:
+					return sub.Automation.AnswerDM.Enabled
+				case listener.NotificationTypeComment:
+					return sub.Automation.AnswerComments.Enabled
+				}
+				return false
+			}
+		}
+	}
+
+	// Fallback to platform-level automation
 	switch notification.Type {
 	case listener.NotificationTypeMessage:
 		return pc.Automation.AnswerDM.Enabled
@@ -1765,12 +2964,64 @@ func (p *Processor) isStoreInfoQuery(text string) bool {
 func (p *Processor) isOrderIntent(text string) bool {
 	t := strings.ToLower(text)
 	lang := p.detectLanguage(t)
+	// NOTE: "ship"/"deliver" (and Arabic/Kurdish equivalents) were deliberately
+	// removed from this list. They used to sit alongside "want"/"buy"/"need",
+	// which meant a plain question like "how much is delivery to Erbil?" was
+	// classified as an order attempt (and then dumped into the quantity/order
+	// pipeline) instead of being answered as the shipping-cost question it is.
+	// See isDeliveryCostQuery below for the dedicated handler.
 	orderWords := map[string][]string{
-		"en": {"order", "buy", "purchase", "want", "need", "get", "take", "give me", "send me", "ship", "deliver"},
-		"ar": {"طلب", "اشتري", "شراء", "أريد", "أحتاج", "أعطني", "أرسل لي", "شحن", "توصيل"},
-		"ku": {"داواکاری", "بکڕە", "کڕین", "دەمەوێت", "پێویستمە", "بیدەمێ", "بنێرمێ", "ناردن", "گەیاندن"},
+		"en": {"order", "buy", "purchase", "want", "need", "get", "take", "give me", "send me"},
+		"ar": {"طلب", "اشتري", "شراء", "أريد", "أحتاج", "أعطني", "أرسل لي"},
+		"ku": {"داواکاری", "بکڕە", "کڕین", "دەمەوێت", "پێویستمە", "بیدەمێ", "بنێرمێ"},
+	}
+	// Availability-phrase questions ("do you have X", "is X available?") are
+	// NOT order intents — they must not hijack the order flow.
+	availWords := map[string][]string{
+		"en": {"available", "in stock", "have", "stock", "exist", "do you have"},
+		"ar": {"متوفر", "في المخزون", "يوجد", "مخزون", "موجود", "هل لديك"},
+		"ku": {"بەردەستە", "لە کۆگادا", "هەیە", "کۆگا", "موجودە", "تۆ لەگەڵت هەیە"},
+	}
+	if matchesLangWords(t, lang, availWords) {
+		return false
+	}
+	// "order" used as a noun referring to something already placed ("my
+	// order", "show me my order", "order status") is NOT an order intent —
+	// without this, isOrderStatusQuery-style phrases get misread as "place
+	// a new order" purely because they contain the word "order".
+	if p.isOrderStatusQuery(t) {
+		return false
 	}
 	return matchesLangWords(t, lang, orderWords)
+}
+
+// isDeliveryCostQuery detects a standalone question about shipping/delivery
+// price ("how much is delivery to Erbil?", "شحن كم؟") as distinct from actually
+// placing an order. Checked independently of isOrderIntent so it can be
+// answered directly from the shipping table without hijacking (or being
+// hijacked by) the order flow.
+func (p *Processor) isDeliveryCostQuery(text string) bool {
+	t := strings.ToLower(text)
+	lang := p.detectLanguage(t)
+	words := map[string][]string{
+		"en": {
+			"delivery cost", "delivery price", "delivery fee", "delivery charge",
+			"shipping cost", "shipping price", "shipping fee", "shipping charge",
+			"how much is delivery", "how much for delivery", "how much to deliver",
+			"how much is shipping", "how much for shipping", "cost of delivery",
+			"cost to deliver", "delivery to",
+		},
+		"ar": {
+			"سعر التوصيل", "تكلفة التوصيل", "أجرة التوصيل", "اجرة التوصيل",
+			"كم التوصيل", "كم سعر التوصيل", "كم يكلف التوصيل", "كم أجرة التوصيل",
+			"سعر الشحن", "تكلفة الشحن", "كم الشحن",
+		},
+		"ku": {
+			"نرخی گەیاندن", "کرێی گەیاندن", "گەیاندن چەندە", "بۆ گەیاندن چەندە",
+			"نرخی ناردن", "چەند بۆ گەیاندن",
+		},
+	}
+	return matchesLangWords(t, lang, words)
 }
 
 func (p *Processor) isPriceQuery(text string) bool {
@@ -1795,6 +3046,244 @@ func (p *Processor) isAvailabilityQuery(text string) bool {
 	return matchesLangWords(t, lang, words)
 }
 
+// isCompatibilityQuery detects "does this work for/with X", "is this
+// compatible with X", "will it fit my X" style questions — the customer is
+// asking whether the currently-discussed product suits a specific
+// device/use-case, not asking about stock or price.
+func (p *Processor) isCompatibilityQuery(text string) bool {
+	t := strings.ToLower(text)
+	lang := p.detectLanguage(t)
+	phrases := map[string][]string{
+		"en": {
+			"work for", "work with", "works for", "works with", "will it work",
+			"compatible with", "compatible for", "fit my", "fit for", "fits my",
+			"fits for", "suitable for", "suit my", "use it for", "use this for",
+			"usable for", "good for my", "good for a",
+		},
+		"ar": {"يشتغل مع", "يعمل مع", "متوافق مع", "يناسب", "يصلح ل", "يصلح مع"},
+		"ku": {"لەگەڵ کار دەکات", "گونجاوە بۆ", "لەبار دەکات", "بۆ باشە"},
+	}
+	return matchesLangWords(t, lang, phrases)
+}
+
+// extractCompatibilityTarget pulls the device/use-case out of a
+// compatibility question by cutting everything up to and including the
+// trigger phrase, then dropping possessives/filler from what's left.
+// "does this work for my turbo heater?" -> "turbo heater"
+// "هل يعمل مع سخان التوربو؟" -> "سخان التوربو"
+func (p *Processor) extractCompatibilityTarget(text string) string {
+	t := strings.ToLower(text)
+	lang := p.detectLanguage(t)
+	triggersByLang := map[string][]string{
+		"en": {
+			"works with", "work with", "works for", "work for", "will it work with",
+			"will it work for", "will it work",
+			"compatible with", "compatible for",
+			"fits with", "fits for", "fits my", "fit with", "fit for", "fit my",
+			"suitable for", "suit my", "use it for", "use this for", "usable for",
+			"good for my", "good for a", "good for",
+		},
+		"ar": {"يشتغل مع", "يعمل مع", "متوافق مع", "يناسب", "يصلح مع", "يصلح ل"},
+		"ku": {"لەگەڵ کار دەکات", "گونجاوە بۆ", "لەبار دەکات", "بۆ باشە"},
+	}
+	// The classifier (isCompatibilityQuery) already detected the language via
+	// matchesLangWords' en-fallback, so try the detected language's triggers
+	// first, then fall back to checking all of them — a message can be
+	// mostly Arabic/Kurdish with an English trigger phrase mixed in, or vice
+	// versa, and we'd rather find *something* than return empty.
+	ordered := append([]string{}, triggersByLang[lang]...)
+	for l, trigs := range triggersByLang {
+		if l != lang {
+			ordered = append(ordered, trigs...)
+		}
+	}
+
+	rest := ""
+	for _, trig := range ordered {
+		if idx := strings.Index(t, trig); idx != -1 {
+			rest = t[idx+len(trig):]
+			break
+		}
+	}
+	if rest == "" {
+		return ""
+	}
+	stop := map[string]bool{
+		// English
+		"my": true, "the": true, "a": true, "an": true, "your": true,
+		"our": true, "this": true, "that": true, "please": true, "it": true,
+		// Arabic / Kurdish possessives and fillers ("my", "for", "please")
+		"من": true, "الخاص": true, "لو": true, "سمحت": true, "ال": true,
+		"بۆ": true, "ئەم": true, "ئەو": true,
+	}
+	var words []string
+	for _, w := range strings.FieldsFunc(rest, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if !stop[w] && len([]rune(w)) > 1 {
+			words = append(words, w)
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// productMatchesUse checks whether the given product's "uses" text mentions
+// the target device/use-case the customer asked about. This is a plain
+// keyword/substring match against uses_en/uses_ar/uses_ku (plus the
+// description as a fallback) — it will not catch typos ("hater" vs
+// "heater") or synonyms not present in the uses text, but it's a solid
+// first pass without needing a separate compatibility/fitment table.
+func (p *Processor) productMatchesUse(ctx context.Context, sku, target, lang string) (bool, error) {
+	if target == "" || sku == "" {
+		return false, nil
+	}
+	row := p.db.QueryRowContext(ctx, `
+		SELECT uses_en, uses_ar, uses_ku, description
+		FROM products
+		WHERE sku = ? AND is_active = 1
+		LIMIT 1
+	`, sku)
+	var usesEn, usesAr, usesKu, desc sql.NullString
+	if err := row.Scan(&usesEn, &usesAr, &usesKu, &desc); err != nil {
+		return false, err
+	}
+	// Search the language-appropriate uses column first, then fall back to
+	// English uses and the description, mirroring the en-fallback pattern
+	// used elsewhere (matchesLangWords, searchProductsByText).
+	var primary string
+	switch lang {
+	case "ar":
+		primary = usesAr.String
+	case "ku":
+		primary = usesKu.String
+	default:
+		primary = usesEn.String
+	}
+	haystack := strings.ToLower(primary + " " + usesEn.String + " " + desc.String)
+	for _, kw := range strings.Fields(target) {
+		if len([]rune(kw)) > 2 && strings.Contains(haystack, kw) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// createProductCompatibilityTicket answers a "does this work for X?"
+// question by checking the product's uses_en/uses_ar/uses_ku text for the
+// extracted target. Three outcomes: a confident yes, a confident "not
+// listed" no, or — if we couldn't extract a target at all — a request to
+// rephrase, since guessing here risks giving a wrong yes/no.
+func (p *Processor) createProductCompatibilityTicket(ctx context.Context, notification *listener.Notification, product map[string]interface{}, text string) *ProcessResult {
+	lang := p.detectLanguage(text)
+	sku, _ := product["sku"].(string)
+	target := p.extractCompatibilityTarget(text)
+
+	if target == "" {
+		return p.createResult(notification, "send_compatibility_answer", "product_compatibility_unknown", map[string]interface{}{
+			"product":  product,
+			"language": lang,
+		})
+	}
+
+	match, err := p.productMatchesUse(ctx, sku, target, lang)
+	if err != nil {
+		log.Printf("[Processor] compatibility check error (sku=%s): %v", sku, err)
+	}
+	intent := "product_compatibility_no"
+	if match {
+		intent = "product_compatibility_yes"
+	}
+	return p.createResult(notification, "send_compatibility_answer", intent, map[string]interface{}{
+		"product":  product,
+		"target":   target,
+		"language": lang,
+	})
+}
+
+// createOrderStatusTicket looks up the customer's most recent order(s) and
+// returns them directly — this is a self-serve DB read, not an escalation,
+// since we already have everything needed (status/total/items) without
+// involving a human.
+func (p *Processor) createOrderStatusTicket(ctx context.Context, notification *listener.Notification) *ProcessResult {
+	lang := p.detectLanguage(p.getNotificationText(notification))
+
+	userID := p.getUserID(notification)
+	var internalID string
+	if userID != "" {
+		if err := p.db.QueryRowContext(ctx,
+			`SELECT id FROM platform_users WHERE platform = ? AND platform_user_id = ?`,
+			notification.PlatformID, userID).Scan(&internalID); err != nil && err != sql.ErrNoRows {
+			log.Printf("[Processor] order status: platform_users lookup error for %s: %v", userID, err)
+		}
+	}
+	if internalID == "" {
+		return p.createResult(notification, "send_order_status", "order_status_none", map[string]interface{}{
+			"language": lang,
+		})
+	}
+
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, status, total, created_at
+		FROM orders
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+		LIMIT 3
+	`, internalID)
+	if err != nil {
+		log.Printf("[Processor] order status: orders query error for %s: %v", internalID, err)
+		return p.createResult(notification, "send_order_status", "order_status_none", map[string]interface{}{
+			"language": lang,
+		})
+	}
+	defer rows.Close()
+
+	var orders []map[string]interface{}
+	for rows.Next() {
+		var id, status, createdAt string
+		var total float64
+		if err := rows.Scan(&id, &status, &total, &createdAt); err != nil {
+			continue
+		}
+		orders = append(orders, map[string]interface{}{
+			"id":         id,
+			"status":     status,
+			"total":      total,
+			"created_at": createdAt,
+		})
+	}
+
+	if len(orders) == 0 {
+		return p.createResult(notification, "send_order_status", "order_status_none", map[string]interface{}{
+			"language": lang,
+		})
+	}
+
+	// Attach line items for the most recent order only — that's the one
+	// customers almost always mean, and it keeps the query cheap.
+	if id, ok := orders[0]["id"].(string); ok {
+		itemRows, err := p.db.QueryContext(ctx, `
+			SELECT product_name, quantity FROM order_items WHERE order_id = ?
+		`, id)
+		if err == nil {
+			var items []map[string]interface{}
+			for itemRows.Next() {
+				var name string
+				var qty int
+				if err := itemRows.Scan(&name, &qty); err == nil {
+					items = append(items, map[string]interface{}{"name": name, "quantity": qty})
+				}
+			}
+			itemRows.Close()
+			orders[0]["items"] = items
+		}
+	}
+
+	return p.createResult(notification, "send_order_status", "order_status_found", map[string]interface{}{
+		"orders":   orders,
+		"language": lang,
+	})
+}
+
 func (p *Processor) isCancellationIntent(text string) bool {
 	t := strings.ToLower(text)
 	lang := p.detectLanguage(t)
@@ -1804,6 +3293,29 @@ func (p *Processor) isCancellationIntent(text string) bool {
 		"ku": {"هەڵوەشاندنەوەی داواکاری", "داواکاریەکەم هەڵبوەشێنەوە"},
 	}
 	return matchesLangWords(t, lang, words)
+}
+
+// isOrderStatusQuery detects a self-serve "show/check my order(s)" request —
+// the customer wants to see an order they already placed, as distinct from
+// isOrderIntent ("order the wick") or isShippingQuery ("where is my order" /
+// "tracking", which escalates to support since we don't have carrier data).
+func (p *Processor) isOrderStatusQuery(text string) bool {
+	t := strings.ToLower(text)
+	lang := p.detectLanguage(t)
+	phrases := map[string][]string{
+		"en": {
+			"my order", "my orders", "show me my order", "show my order",
+			"check my order", "view my order", "see my order", "order status",
+			"my order status", "my past order", "my previous order", "my order history",
+		},
+		"ar": {
+			"طلبي", "طلباتي", "اعرض طلبي", "تحقق من طلبي", "حالة الطلب", "حالة طلبي",
+		},
+		"ku": {
+			"داواکاریەکەم", "داواکاریەکانم", "داواکاریەکەم پیشان بدە", "باری داواکاری",
+		},
+	}
+	return matchesLangWords(t, lang, phrases)
 }
 
 func (p *Processor) isComplaint(text string) bool {
@@ -1921,7 +3433,10 @@ func (p *Processor) isConfirmationResponse(text string) bool {
 		"نعم", "أكيد", "طبعا", "حاضر", "تمام", "أوكي", "ابشر", "ماشي", "خلاص", "موافق",
 		"بەڵێ", "ئەرێ", "باشە", "زۆر باش", "باشتر", "ڕازی",
 	} {
-		if t == w || strings.HasPrefix(t, w) {
+		// Word-boundary prefix match: bare HasPrefix(t, w) would match "nokia" on
+		// "no", "oklahoma" on "ok", etc. Require the match to end the string or be
+		// followed by a space/punctuation.
+		if t == w || strings.HasPrefix(t, w+" ") {
 			return true
 		}
 	}
@@ -1932,10 +3447,31 @@ func (p *Processor) isRejectionResponse(text string) bool {
 	t := strings.ToLower(strings.TrimSpace(text))
 	for _, w := range []string{
 		"no", "cancel", "stop", "wrong", "nope", "nah", "not interested", "no thanks",
+		"not this", "not this one", "not it", "that's not it", "thats not it",
+		"it's not this", "its not this", "it's not this one", "its not this one",
+		"wrong one", "wrong product", "different product", "not the right one",
 		"لا", "لأ", "لا شكرا", "مش عايز", "مش عاوزه", "مش مهتم", "بلاش", "خلاص مش عايز",
-		"نەخێر", "نا", "ناخوازم", "بێزار", "پێویست نیم", "دەستم لێ نەکەوت",
+		"مش هذا", "مو هذا", "مب هذا", "غلط",
+		"نەخێر", "نا", "ناخوازم", "بێزار", "پێویست نیم", "دەستم لێ نەکەوت", "ئەمە نییە",
 	} {
-		if t == w || strings.HasPrefix(t, w) {
+		// Word-boundary prefix match — bare HasPrefix(t, "no") would fire on
+		// "nothing else", "november", "nokia", silently cancelling an order the
+		// user never rejected.
+		if t == w || strings.HasPrefix(t, w+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Processor) isChangeDetailsRequest(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	for _, w := range []string{
+		"change", "change address", "change details", "edit", "update address", "new address", "different address",
+		"غيّر", "غيار", "تغيير", "تغيير العنوان", "عدّل", "تعديل", "تعديل العنوان",
+		"گۆڕین", "بیگۆڕە", "ناونیشان بگۆڕە", "گۆڕانکاری",
+	} {
+		if t == w || strings.HasPrefix(t, w+" ") {
 			return true
 		}
 	}
@@ -1944,10 +3480,24 @@ func (p *Processor) isRejectionResponse(text string) bool {
 
 func (p *Processor) extractKeywords(text string) []string {
 	t := strings.ToLower(strings.TrimSpace(text))
+	// Strip conversational filler so product nouns become the keywords:
+	// "hello, do you have wick?" -> "wick", "do you have brush" -> "brush".
+	for _, prefix := range []string{
+		"hello ", "hi ", "hey ", "greetings ", "good morning ", "good afternoon ", "good evening ",
+	} {
+		t = strings.TrimPrefix(t, prefix)
+	}
 	stop := map[string]bool{
 		"the": true, "a": true, "an": true, "and": true, "or": true,
 		"for": true, "to": true, "in": true, "on": true, "at": true,
 		"price": true, "cost": true,
+		"hello": true, "hi": true, "hey": true, "greetings": true,
+		"good": true, "morning": true, "afternoon": true, "evening": true,
+		"do": true, "you": true, "have": true, "please": true, "can": true,
+		"i": true, "want": true, "need": true, "get": true, "is": true,
+		"are": true, "there": true, "available": true, "some": true,
+		"مرحبا": true, "السلام": true, "اهلا": true, "يوجد": true, "متوفر": true,
+		"سڵاو": true, "هەیە": true, "بەردەستە": true,
 	}
 	var kws []string
 	seen := map[string]bool{}
@@ -2182,32 +3732,133 @@ func (p *Processor) scanProduct(rows *sql.Rows) (map[string]interface{}, error) 
 	return prod, nil
 }
 
-func (p *Processor) extractOrderQuantity(text string) int {
+// numberWords maps spelled-out quantity words (English, Arabic, Kurdish) to
+// their integer value, so "I want four" / "أربعة" / "چوار" are recognized as
+// quantities exactly like digit input ("4"). Without this, extractOrderQuantity
+// silently fell back to a hardcoded 1 for any non-digit reply.
+var numberWords = map[string]map[string]int{
+	"en": {
+		// Deliberately NOT including "a"/"an"/"single"/"couple"/"dozen" — those
+		// show up as ordinary articles in unrelated sentences ("a discount", "a
+		// person") far more often than as a real quantity, so treating them as
+		// numbers would defeat the whole point of only acting on an EXPLICIT
+		// quantity. Stick to unambiguous cardinal number words.
+		"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+		"eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+		"fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+		"nineteen": 19, "twenty": 20,
+	},
+	"ar": {
+		"واحد": 1, "واحدة": 1, "اثنين": 2, "اثنان": 2, "ثنين": 2, "ثلاثة": 3, "ثلاث": 3,
+		"اربعة": 4, "أربعة": 4, "اربع": 4, "أربع": 4, "خمسة": 5, "خمس": 5, "ستة": 6, "ست": 6,
+		"سبعة": 7, "سبع": 7, "ثمانية": 8, "ثماني": 8, "تسعة": 9, "تسع": 9, "عشرة": 10, "عشر": 10,
+	},
+	"ku": {
+		"یەک": 1, "دوو": 2, "سێ": 3, "چوار": 4, "پێنج": 5, "شەش": 6, "حەوت": 7,
+		"هەشت": 8, "نۆ": 9, "دە": 10,
+	},
+}
+
+// extractExplicitQuantity looks for a quantity the user actually stated —
+// either as a digit ("4") or a spelled-out number word in any supported
+// language ("four", "أربعة", "چوار"). It returns (quantity, true) only when
+// something explicit was found. Callers MUST check the bool: silently
+// defaulting to 1 when the user never gave a number is exactly what causes
+// an order to be created for a quantity nobody asked for.
+func (p *Processor) extractExplicitQuantity(text string) (int, bool) {
 	nums := p.extractNumbers(text)
 	for _, n := range nums {
 		if n >= 1 && n <= maxPlausibleQuantity {
-			return n
+			return n, true
 		}
 	}
-	return 1
+	tokens := wordTokens(strings.ToLower(text))
+	for _, tok := range tokens {
+		for _, lang := range [...]string{"en", "ar", "ku"} {
+			if n, ok := numberWords[lang][tok]; ok && n >= 1 {
+				return n, true
+			}
+		}
+	}
+	return 1, false
+}
+
+// extractOrderQuantity preserves the historical "default to 1" behavior for
+// callers that already have their own way of asking the user when a quantity
+// is genuinely required (see extractExplicitQuantity for that check).
+func (p *Processor) extractOrderQuantity(text string) int {
+	n, _ := p.extractExplicitQuantity(text)
+	return n
+}
+
+func looksLikePhone(s string) bool {
+	// A valid number must start with 07 and be longer than 6 digits total,
+	// so "blalalalala 07343434" is a correct entry.
+	t := strings.TrimSpace(s)
+	if !strings.HasPrefix(t, "07") {
+		return false
+	}
+	digits := 0
+	for _, r := range t {
+		if unicode.IsDigit(r) {
+			digits++
+		}
+	}
+	return digits > 6 && digits <= 15
+}
+
+// hasCompleteDelivery checks whether delivery details contain a valid phone number.
+// That's the ONLY requirement — everything else is optional.
+func hasCompleteDelivery(d map[string]string) bool {
+	return d["phone"] != ""
 }
 
 func (p *Processor) extractDeliveryDetails(text string) map[string]string {
-	t := strings.ToLower(text)
+	// Capture any valid phone number (7+ digits, optionally starting with + or 00).
+	// The entire text will be saved as shipping_address separately.
 	details := make(map[string]string)
-	for _, w := range []string{"address", "location", "street", "house", "عنوان", "شارع", "ناونیشان"} {
-		if strings.Contains(t, w) {
-			details["has_address"] = "true"
-			break
-		}
-	}
-	for _, w := range []string{"phone", "number", "mobile", "contact", "هاتف", "رقم", "مۆبایل", "ژمارە"} {
-		if strings.Contains(t, w) {
-			details["has_phone"] = "true"
-			break
-		}
+
+	// Match international format (+XXX), 00XXX format, or local (7+ digits)
+	phoneRe := regexp.MustCompile(`(\+?[0-9]{7,15}|00[0-9]{7,15}|[0-9]{7,15})`)
+	allMatches := phoneRe.FindAllString(text, -1)
+	if len(allMatches) > 0 {
+		details["phone"] = allMatches[0]
+		details["has_phone"] = "true"
 	}
 	return details
+}
+
+// mergeDeliveryText parses the user's reply for a valid phone number.
+// The ENTIRE text will be used as shipping_address — we don't extract
+// name or address separately anymore.
+func (p *Processor) mergeDeliveryText(text string, existing map[string]string) map[string]string {
+	merged := p.extractDeliveryDetails(text)
+
+	// Merge any previously found phone number (new replies win).
+	for k, v := range existing {
+		if v == "" {
+			continue
+		}
+		if _, already := merged[k]; !already {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+// deliveryDetailsPrompt asks for phone number only if missing.
+func (p *Processor) deliveryDetailsPrompt(current map[string]string, lang string, missing map[string]bool) string {
+	if !missing["phone"] {
+		return ""
+	}
+	switch lang {
+	case "ar":
+		return "من فضلك أرسل رقم الهاتف وعنوان التوصيل (مثال: رواندوز 0770232323)"
+	case "ku":
+		return "تکایە ژمارەی تەلەفۆن و ناونیشانی گەیاندن بنێرە (نموونە: رواندوز 0770232323)"
+	default:
+		return "Please send your phone number and delivery address (example: Rawa Slemani 0770232323)"
+	}
 }
 
 func (p *Processor) extractNumbers(text string) []int {
@@ -2372,12 +4023,20 @@ func (p *Processor) isPlatformImageRecognitionEnabled(platformID string) bool {
 	if cfg == nil || !cfg.ImageRecognition.Enabled {
 		return false
 	}
-	if pc, ok := cfg.Platforms[platformID]; ok {
-		if pc.Automation.AnswerDM.Enabled || pc.Automation.AnswerComments.Enabled {
+	pc, ok := cfg.Platforms[platformID]
+	if !ok {
+		return false
+	}
+
+	// Check any subtype automation first
+	for _, sub := range pc.Subtypes {
+		if sub.Automation.AnswerDM.Enabled || sub.Automation.AnswerComments.Enabled {
 			return true
 		}
 	}
-	return false
+
+	// Fallback to platform-level
+	return pc.Automation.AnswerDM.Enabled || pc.Automation.AnswerComments.Enabled
 }
 
 func (p *Processor) hasProductData(notification *listener.Notification) (bool, map[string]interface{}) {

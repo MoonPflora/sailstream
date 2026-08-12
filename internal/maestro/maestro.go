@@ -28,13 +28,6 @@ import (
 	"sailstream/internal/tasker"
 )
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 type MaestroState string
 
 const (
@@ -67,19 +60,12 @@ type TimeSlot struct {
 	Minute int
 }
 
-type GlobalRateLimits struct {
-	PostsPerHour int
-	PostsPerDay  int
-
-	hourlyPosts   int
-	dailyPosts    int
-	lastHourReset time.Time
-	lastDayReset  time.Time
-
-	randomPostsDisabled    atomic.Bool
-	scheduledPostsDisabled atomic.Bool
-
-	mu sync.Mutex
+// ScheduleSlot is a fixed daily post time (config: platforms.<platform>.
+// posting.schedule_times) tagged with the platform it belongs to.
+type ScheduleSlot struct {
+	PlatformID string
+	Hour       int
+	Minute     int
 }
 
 type PlatformStatus struct {
@@ -112,22 +98,21 @@ type PlatformDailyStats struct {
 }
 
 type PlatformListener struct {
-	PlatformID     string
-	SubtypeID      string
-	AccountID      string
-	Config         *listener.ListenerConfig
-	Session        *session.Session
-	Cancel         context.CancelFunc
-	IsRunning      atomic.Bool
-	IsPaused       atomic.Bool
-	ErrorCount     int32
-	LastError      string
-	NotifCount     int64
-	ReconnectFail  atomic.Bool
-	PlatformLimits *config.PlatformLimits
-	DailyStats     *PlatformDailyStats
-	Collector      PlatformCollector
-	statsMu        sync.Mutex
+	PlatformID    string
+	SubtypeID     string
+	AccountID     string
+	Config        *listener.ListenerConfig
+	Session       *session.Session
+	Cancel        context.CancelFunc
+	IsRunning     atomic.Bool
+	IsPaused      atomic.Bool
+	ErrorCount    int32
+	LastError     string
+	NotifCount    int64
+	ReconnectFail atomic.Bool
+	DailyStats    *PlatformDailyStats
+	Collector     PlatformCollector
+	statsMu       sync.Mutex
 }
 
 type ControlCommand struct {
@@ -190,14 +175,20 @@ type Maestro struct {
 	idleTimeout   time.Duration
 	timezone      *time.Location
 
-	scheduleTimes []TimeSlot
+	// ScheduleSlot pairs a fixed daily post time with the platform it
+	// belongs to (config: platforms.<platform>.posting.schedule_times).
+	// Previously these were flattened into a single global []TimeSlot,
+	// which discarded which platform each time was configured for and
+	// caused every schedule_times entry, on any platform, to trigger a
+	// post to ALL platforms simultaneously. Keeping platformID here fixes
+	// that and lets checkScheduleTimes fire per-platform like
+	// checkRandomPosting already does.
+	scheduleTimes []ScheduleSlot
 	lastFired     map[string]time.Time
 	nextWake      time.Time
 	lastActivity  time.Time
 
 	nextScheduledPostCheck time.Time
-
-	globalRateLimits *GlobalRateLimits
 
 	platformStatus map[string]*PlatformStatus
 	listeners      map[string]*PlatformListener
@@ -223,6 +214,13 @@ type Maestro struct {
 
 	tapMu      sync.Mutex
 	sandboxTap func(*nnlp.ProcessResult, *shared.AutomationInstruction)
+
+	// Cross-goroutine synchronization: lifecycle state, config mutation,
+	// schedule map, and in-flight notification processing.
+	lifecycleMu    sync.RWMutex
+	scheduleMu     sync.Mutex
+	configMu       sync.Mutex
+	notificationWG sync.WaitGroup
 }
 
 func NewMaestro(configPath string, envManager *enviroment.Environment) (*Maestro, error) {
@@ -267,32 +265,21 @@ func NewMaestro(configPath string, envManager *enviroment.Environment) (*Maestro
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	postsPerDay := cfg.Scheduler.RateLimits.PostsPerDay
-	if postsPerDay == 0 {
-		postsPerDay = 50
-	}
-
 	instructionChan := make(chan *shared.AutomationInstruction, 1000)
 
 	m := &Maestro{
-		configManager:  configManager,
-		sessionManager: sessionManager,
-		db:             database.GetDB(),
-		envManager:     envManager,
-		processor:      processor,
-		operationMode:  cfg.System.OperationMode,
-		wakeInterval:   time.Duration(cfg.System.WakePolicy.IntervalMinutes) * time.Minute,
-		idleTimeout:    time.Duration(cfg.System.WakePolicy.IdleSleepMinutes) * time.Minute,
-		timezone:       tz,
-		platformStatus: make(map[string]*PlatformStatus),
-		listeners:      make(map[string]*PlatformListener),
-		lastFired:      make(map[string]time.Time),
-		globalRateLimits: &GlobalRateLimits{
-			PostsPerHour:  cfg.Scheduler.RateLimits.PostsPerHour,
-			PostsPerDay:   postsPerDay,
-			lastHourReset: time.Now(),
-			lastDayReset:  time.Now(),
-		},
+		configManager:    configManager,
+		sessionManager:   sessionManager,
+		db:               database.GetDB(),
+		envManager:       envManager,
+		processor:        processor,
+		operationMode:    cfg.System.OperationMode,
+		wakeInterval:     time.Duration(cfg.System.WakePolicy.IntervalMinutes) * time.Minute,
+		idleTimeout:      time.Duration(cfg.System.WakePolicy.IdleSleepMinutes) * time.Minute,
+		timezone:         tz,
+		platformStatus:   make(map[string]*PlatformStatus),
+		listeners:        make(map[string]*PlatformListener),
+		lastFired:        make(map[string]time.Time),
 		notificationChan: make(chan *listener.Notification, 1000),
 		nnlpResultChan:   make(chan *nnlp.ProcessResult, 1000),
 		instructionChan:  instructionChan,
@@ -302,19 +289,27 @@ func NewMaestro(configPath string, envManager *enviroment.Environment) (*Maestro
 		ctx:              ctx,
 		cancel:           cancel,
 		stats: &MaestroStats{
-			StartTime:    time.Now(),
-			RotationMode: cfg.Posting.RotationMode,
-			NNLPStats:    make(map[string]interface{}),
+			StartTime: time.Now(),
+			NNLPStats: make(map[string]interface{}),
 		},
 	}
 
 	m.state.Store(StateIdle)
 	m.initializePlatformStatuses()
-	m.parseScheduleTimes(cfg)
 
 	m.migrateRateLimitsTable()
 	m.bootstrapRateLimits()
-	compiler := tasker.NewCompiler(database.GetDB(), configManager, llmClient, m)
+	// One-time, idempotent: seeds posting_settings/posting_schedule from
+	// config.json's old posting.* values if those DB tables are still
+	// empty (fresh upgrade from a config-based install). No-ops on every
+	// subsequent start once the DB has rows — config.json no longer has
+	// these fields at all after this, DB is the only source from here on.
+	m.migratePostingSettingsFromConfig()
+	m.loadScheduleTimesFromDB()
+	m.stats.RotationMode = m.getRotationMode()
+
+	sandboxMode := os.Getenv("SAILSTREAM_SANDBOX") == "1"
+	compiler := tasker.NewCompiler(database.GetDB(), configManager, llmClient, m, sandboxMode)
 	m.compiler = compiler
 	m.poster = scripts.NewPoster(envManager, configManager, instructionChan)
 
@@ -417,19 +412,91 @@ func (m *Maestro) initializePlatformStatuses() {
 	m.stats.TotalPlatforms = len(m.platformStatus)
 }
 
-func (m *Maestro) parseScheduleTimes(cfg *config.Config) {
-	for _, platformCfg := range cfg.Platforms {
-		for _, scheduleTime := range platformCfg.Posting.ScheduleTimes {
-			parsedTime, err := time.Parse("15:04", scheduleTime)
-			if err != nil {
-				continue
-			}
-			m.scheduleTimes = append(m.scheduleTimes, TimeSlot{
-				Hour:   parsedTime.Hour(),
-				Minute: parsedTime.Minute(),
-			})
-		}
+// loadScheduleTimesFromDB replaces the old parseScheduleTimes(cfg) — fixed
+// daily post times now live in the posting_schedule table instead of
+// config.json's platforms.<platform>.posting.schedule_times, so this reads
+// the DB instead of walking platform configs.
+func (m *Maestro) loadScheduleTimesFromDB() {
+	m.scheduleTimes = nil
+	if m.db == nil {
+		return
 	}
+	rows, err := m.db.Query(`SELECT platform, subtype, post_time FROM posting_schedule WHERE enabled = 1`)
+	if err != nil {
+		log.Printf("[Maestro] loadScheduleTimesFromDB query error: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var platformID, subtype, postTime string
+		if err := rows.Scan(&platformID, &subtype, &postTime); err != nil {
+			continue
+		}
+		parsedTime, err := time.Parse("15:04", postTime)
+		if err != nil {
+			continue
+		}
+		m.scheduleTimes = append(m.scheduleTimes, ScheduleSlot{
+			PlatformID: platformID,
+			Hour:       parsedTime.Hour(),
+			Minute:     parsedTime.Minute(),
+		})
+	}
+}
+
+// PostingSettings mirrors a posting_settings row — the DB-backed
+// replacement for config.json's platforms.<platform>.posting.random/.manual.
+type PostingSettings struct {
+	RandomEnabled          bool
+	RandomIntervalMinHours int
+	RandomIntervalMaxHours int
+	RandomPostsPerCycle    int
+	RandomUseGlobal        bool
+	ManualEnabled          bool
+	ManualTitle            string
+	ManualDescription      string
+	ManualMediaType        string
+	ManualMediaURL         string
+	RotationMode           string
+}
+
+// getPostingSettings reads a platform+subtype's posting settings from the DB.
+// Falls back to the platform-level row (subtype=”) if a subtype-specific
+// row doesn't exist, matching the old config fallback behavior between
+// platform-level and subtype-level posting blocks. ok=false means neither
+// row exists (posting not configured for this platform at all).
+func (m *Maestro) getPostingSettings(platform, subtype string) (PostingSettings, bool) {
+	var ps PostingSettings
+	if m.db == nil {
+		return ps, false
+	}
+	scanRow := func(sub string) bool {
+		var randomEnabled, randomUseGlobal, manualEnabled int
+		err := m.db.QueryRow(`
+			SELECT random_enabled, random_interval_min_hours, random_interval_max_hours,
+			       random_posts_per_cycle, random_use_global,
+			       manual_enabled, manual_title, manual_description, manual_media_type, manual_media_url,
+			       rotation_mode
+			FROM posting_settings WHERE platform=? AND subtype=?`, platform, sub).
+			Scan(&randomEnabled, &ps.RandomIntervalMinHours, &ps.RandomIntervalMaxHours,
+				&ps.RandomPostsPerCycle, &randomUseGlobal,
+				&manualEnabled, &ps.ManualTitle, &ps.ManualDescription, &ps.ManualMediaType, &ps.ManualMediaURL,
+				&ps.RotationMode)
+		if err != nil {
+			return false
+		}
+		ps.RandomEnabled = randomEnabled == 1
+		ps.RandomUseGlobal = randomUseGlobal == 1
+		ps.ManualEnabled = manualEnabled == 1
+		return true
+	}
+	if subtype != "" && scanRow(subtype) {
+		return ps, true
+	}
+	if scanRow("") {
+		return ps, true
+	}
+	return ps, false
 }
 
 func (m *Maestro) parseQuietHours(qh config.QuietHours) {
@@ -443,7 +510,7 @@ func (m *Maestro) isQuietHours() bool {
 	if !cfg.Scheduler.QuietHours.Enabled {
 		return false
 	}
-	now := time.Now().In(m.timezone)
+	now := time.Now().In(m.getTimezone())
 	currentMinutes := now.Hour()*60 + now.Minute()
 	fromParts := strings.Split(cfg.Scheduler.QuietHours.From, ":")
 	toParts := strings.Split(cfg.Scheduler.QuietHours.To, ":")
@@ -526,7 +593,6 @@ func (m *Maestro) lifecycleManager() {
 }
 
 func (m *Maestro) performLifecycleChecks() {
-	m.resetRateLimits()
 	m.resetPlatformDailyStats()
 
 	switch m.operationMode {
@@ -556,43 +622,209 @@ func (m *Maestro) performLifecycleChecks() {
 	m.updateStats()
 }
 
-func (m *Maestro) checkRandomPosting() {
-	cfg := m.configManager.GetConfig()
-	for platformID, platformCfg := range cfg.Platforms {
-		if !platformCfg.Enabled || !platformCfg.Posting.Random.Enabled {
-			continue
+// getRotationMode reads the global posting_settings row's rotation_mode
+// (platform='__global__', subtype=”) — replaces config.json's old top-level
+// posting.rotation_mode.
+func (m *Maestro) getRotationMode() string {
+	if m.db == nil {
+		return "sequential"
+	}
+	var mode string
+	err := m.db.QueryRow(`SELECT rotation_mode FROM posting_settings WHERE platform='__global__' AND subtype=''`).Scan(&mode)
+	if err != nil || mode == "" {
+		return "sequential"
+	}
+	return mode
+}
+
+// legacyPostingConfig mirrors the OLD config.json shape for the posting.*
+// fields that used to live on config.Config/PlatformConfig/PlatformSubtype,
+// before they moved to the posting_settings/posting_schedule tables. It's
+// deliberately NOT part of the live config package — those fields don't
+// exist on the real Config struct anymore. This type exists only so
+// migratePostingSettingsFromConfig can read an old config.json file one
+// last time on upgrade, without needing the live struct to still carry
+// dead fields forever.
+type legacyPostingConfig struct {
+	Posting struct {
+		Fallback struct {
+			Random legacyRandomPosting `json:"random"`
+		} `json:"fallback"`
+		RotationMode string `json:"rotation_mode"`
+	} `json:"posting"`
+	Platforms map[string]struct {
+		Posting  legacyPlatformPosting `json:"posting"`
+		Subtypes []struct {
+			ID      string                `json:"id"`
+			Posting legacyPlatformPosting `json:"posting"`
+		} `json:"subtypes"`
+	} `json:"platforms"`
+}
+
+type legacyPlatformPosting struct {
+	Random        legacyRandomPosting `json:"random"`
+	Manual        legacyManualPosting `json:"manual"`
+	ScheduleTimes []string            `json:"schedule_times"`
+}
+
+type legacyRandomPosting struct {
+	Enabled       bool `json:"enabled"`
+	IntervalHours struct {
+		Min int `json:"min"`
+		Max int `json:"max"`
+	} `json:"interval_hours"`
+	PostsPerCycle int  `json:"posts_per_cycle"`
+	UseGlobal     bool `json:"use_global"`
+}
+
+type legacyManualPosting struct {
+	Enabled bool `json:"enabled"`
+	Payload struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Media       struct {
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"media"`
+	} `json:"payload"`
+}
+
+// migratePostingSettingsFromConfig is a one-time, idempotent seed of
+// posting_settings/posting_schedule from config.json's old posting.* values
+// (platforms.<platform>.posting.random/.manual/.schedule_times, and the
+// top-level posting.fallback.random + posting.rotation_mode). It only runs
+// if posting_settings is completely empty, so existing DB-edited settings
+// are never clobbered by this on a later restart — this exists purely to
+// carry an admin's already-configured settings across the config→DB switch.
+// Reads the config.json file directly (not through the live Config struct,
+// which no longer has these fields) since this is a read-once upgrade path.
+func (m *Maestro) migratePostingSettingsFromConfig() {
+	if m.db == nil {
+		return
+	}
+	var existing int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM posting_settings`).Scan(&existing); err != nil {
+		log.Printf("[Maestro] migratePostingSettingsFromConfig count check failed: %v", err)
+		return
+	}
+	if existing > 0 {
+		return
+	}
+	raw, err := os.ReadFile(m.configManager.GetConfigPath())
+	if err != nil {
+		log.Printf("[Maestro] migratePostingSettingsFromConfig: could not read config.json for legacy migration: %v", err)
+		return
+	}
+	var legacy legacyPostingConfig
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		log.Printf("[Maestro] migratePostingSettingsFromConfig: could not parse config.json: %v", err)
+		return
+	}
+	log.Printf("[Maestro] posting_settings is empty — migrating posting settings from config.json")
+
+	upsert := func(platform, subtype string, rp legacyRandomPosting, mp legacyManualPosting, rotationMode string) {
+		_, err := m.db.Exec(`
+			INSERT INTO posting_settings
+				(platform, subtype, random_enabled, random_interval_min_hours, random_interval_max_hours,
+				 random_posts_per_cycle, random_use_global,
+				 manual_enabled, manual_title, manual_description, manual_media_type, manual_media_url,
+				 rotation_mode)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(platform, subtype) DO NOTHING`,
+			platform, subtype,
+			boolToInt(rp.Enabled), rp.IntervalHours.Min, rp.IntervalHours.Max, rp.PostsPerCycle, boolToInt(rp.UseGlobal),
+			boolToInt(mp.Enabled), mp.Payload.Title, mp.Payload.Description, mp.Payload.Media.Type, mp.Payload.Media.URL,
+			rotationMode)
+		if err != nil {
+			log.Printf("[Maestro] migratePostingSettingsFromConfig upsert error for %s/%s: %v", platform, subtype, err)
 		}
-		if m.AreRandomPostsDisabled() {
-			continue
+	}
+
+	// Global fallback row (old config.posting.fallback.random + rotation_mode).
+	upsert("__global__", "", legacy.Posting.Fallback.Random, legacyManualPosting{}, legacy.Posting.RotationMode)
+
+	for platformID, pc := range legacy.Platforms {
+		upsert(platformID, "", pc.Posting.Random, pc.Posting.Manual, "")
+		for _, st := range pc.Posting.ScheduleTimes {
+			m.migrateScheduleSlot(platformID, "", st)
 		}
-		key := m.platformKey(platformID, "account")
-		m.mu.RLock()
-		status, exists := m.platformStatus[key]
-		m.mu.RUnlock()
-		if exists && status.DailyStats != nil {
-			if platformCfg.Limits.DailyPosts > 0 &&
-				status.DailyStats.PostsToday >= platformCfg.Limits.DailyPosts {
-				continue
+		for _, sub := range pc.Subtypes {
+			upsert(platformID, sub.ID, sub.Posting.Random, sub.Posting.Manual, "")
+			for _, st := range sub.Posting.ScheduleTimes {
+				m.migrateScheduleSlot(platformID, sub.ID, st)
 			}
 		}
-		intervalMax := platformCfg.Posting.Random.IntervalHours.Max
+	}
+}
+
+func (m *Maestro) migrateScheduleSlot(platform, subtype, postTime string) {
+	if _, err := time.Parse("15:04", postTime); err != nil {
+		return
+	}
+	if _, err := m.db.Exec(`
+		INSERT INTO posting_schedule (platform, subtype, post_time, enabled)
+		VALUES (?,?,?,1) ON CONFLICT(platform, subtype, post_time) DO NOTHING`,
+		platform, subtype, postTime); err != nil {
+		log.Printf("[Maestro] migrateScheduleSlot error for %s/%s@%s: %v", platform, subtype, postTime, err)
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (m *Maestro) checkRandomPosting() {
+	cfg := m.configManager.GetConfig()
+	// Snapshot per-subtype status entries under the lock, then do random
+	// posting per subtype so each subtype of a platform respects its own
+	// rate limit (previous code used a single subtype per platform).
+	m.mu.RLock()
+	type entry struct {
+		platformID string
+		subtypeID  string
+		status     *PlatformStatus
+		posting    PostingSettings
+	}
+	var entries []entry
+	for _, st := range m.platformStatus {
+		if st == nil || !st.Enabled {
+			continue
+		}
+		pc, exists := cfg.Platforms[st.PlatformID]
+		if !exists || !pc.Enabled {
+			continue
+		}
+		// Posting timing now lives in posting_settings (DB), not
+		// config.json — pc.Enabled above is still the platform on/off
+		// switch, but the "should this platform post at random?" answer
+		// comes from the DB now.
+		ps, ok := m.getPostingSettings(st.PlatformID, st.SubtypeID)
+		if !ok || !ps.RandomEnabled {
+			continue
+		}
+		entries = append(entries, entry{platformID: st.PlatformID, subtypeID: st.SubtypeID, status: st, posting: ps})
+	}
+	m.mu.RUnlock()
+
+	for _, e := range entries {
+		intervalMax := e.posting.RandomIntervalMaxHours
 		if intervalMax <= 0 {
 			intervalMax = 8
 		}
 		if rand.Float64() < 1.0/float64(intervalMax*60) {
-			if !m.CanPost() {
-				return
+			// CanProceed already reserved the slot atomically — no
+			// separate RecordUsage call needed anymore.
+			if ok, _ := m.CanProceed(e.platformID, e.subtypeID, "upload"); !ok {
+				continue
 			}
-			subtypeID := "account"
-			if platformCfg.Platform.Subtype != "" {
-				subtypeID = platformCfg.Platform.Subtype
-			}
-			m.poster.PostRandomToPlatform(platformID, subtypeID, "")
-			m.RecordPost()
+			m.poster.PostRandomToPlatform(e.platformID, e.subtypeID, "")
 			m.stats.mu.Lock()
 			m.stats.RandomPostsSent++
 			m.stats.mu.Unlock()
-			key := m.platformKey(platformID, subtypeID)
+			key := m.platformKey(e.platformID, e.subtypeID)
 			m.updatePlatformStatus(key, func(status *PlatformStatus) {
 				if status.DailyStats != nil {
 					status.DailyStats.PostsToday++
@@ -602,98 +834,72 @@ func (m *Maestro) checkRandomPosting() {
 	}
 }
 
+func (m *Maestro) getTimezone() *time.Location {
+	m.lifecycleMu.RLock()
+	defer m.lifecycleMu.RUnlock()
+	if m.timezone == nil {
+		return time.UTC
+	}
+	return m.timezone
+}
+
 func (m *Maestro) localStartOfDay(t time.Time) time.Time {
-	loc := m.timezone
+	loc := m.getTimezone()
 	y, mo, d := t.In(loc).Date()
 	return time.Date(y, mo, d, 0, 0, 0, 0, loc)
 }
 
+// checkScheduleTimes fires each platform's own configured schedule_times
+// slots independently (platforms.<platform>.posting.schedule_times), gated
+// per platform/subtype through the same DB-backed rate_limits table as
+// checkRandomPosting — no separate global gate, and one platform hitting its
+// scheduled-post limit doesn't hold back another platform's slot.
 func (m *Maestro) checkScheduleTimes() {
 	now := time.Now().In(m.timezone)
 	currentHM := TimeSlot{Hour: now.Hour(), Minute: now.Minute()}
 	todayStart := m.localStartOfDay(now)
+
+	cfg := m.configManager.GetConfig()
+	m.mu.RLock()
+	type entry struct {
+		platformID string
+		subtypeID  string
+	}
+	byPlatform := make(map[string][]entry)
+	for _, st := range m.platformStatus {
+		if st == nil || !st.Enabled {
+			continue
+		}
+		byPlatform[st.PlatformID] = append(byPlatform[st.PlatformID], entry{platformID: st.PlatformID, subtypeID: st.SubtypeID})
+	}
+	m.mu.RUnlock()
+
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
 	for _, slot := range m.scheduleTimes {
-		if slot.Hour == currentHM.Hour && slot.Minute == currentHM.Minute {
-			key := fmt.Sprintf("%02d:%02d", slot.Hour, slot.Minute)
-			last, fired := m.lastFired[key]
-			if !fired || last.Before(todayStart) {
-				m.lastFired[key] = now
-				if m.CanPost() {
-					m.poster.PostRandom()
-					m.RecordPost()
-					m.stats.mu.Lock()
-					m.stats.RandomPostsSent++
-					m.stats.mu.Unlock()
-				}
+		if slot.Hour != currentHM.Hour || slot.Minute != currentHM.Minute {
+			continue
+		}
+		pc, exists := cfg.Platforms[slot.PlatformID]
+		if !exists || !pc.Enabled {
+			continue
+		}
+		key := fmt.Sprintf("%s@%02d:%02d", slot.PlatformID, slot.Hour, slot.Minute)
+		last, fired := m.lastFired[key]
+		if fired && !last.Before(todayStart) {
+			continue
+		}
+		m.lastFired[key] = now
+		for _, e := range byPlatform[slot.PlatformID] {
+			if ok, _ := m.CanProceed(e.platformID, e.subtypeID, "upload"); !ok {
+				continue
 			}
+			m.poster.PostRandomToPlatform(e.platformID, e.subtypeID, "")
+			m.stats.mu.Lock()
+			m.stats.ScheduledPostsSent++
+			m.stats.mu.Unlock()
 		}
 	}
-}
-
-func (m *Maestro) resetRateLimits() {
-	m.globalRateLimits.mu.Lock()
-	defer m.globalRateLimits.mu.Unlock()
-	now := time.Now()
-	if now.Sub(m.globalRateLimits.lastHourReset) >= time.Hour {
-		m.globalRateLimits.hourlyPosts = 0
-		m.globalRateLimits.lastHourReset = now
-		m.globalRateLimits.randomPostsDisabled.Store(false)
-		m.stats.mu.Lock()
-		m.stats.PostsThisHour = 0
-		m.stats.mu.Unlock()
-	}
-	if now.Sub(m.globalRateLimits.lastDayReset) >= 24*time.Hour {
-		m.globalRateLimits.dailyPosts = 0
-		m.globalRateLimits.lastDayReset = now
-		m.globalRateLimits.scheduledPostsDisabled.Store(false)
-		m.stats.mu.Lock()
-		m.stats.PostsToday = 0
-		m.stats.TotalSentToday = 0
-		m.stats.mu.Unlock()
-	}
-}
-
-func (m *Maestro) CanPost() bool {
-	m.globalRateLimits.mu.Lock()
-	defer m.globalRateLimits.mu.Unlock()
-	if m.globalRateLimits.PostsPerHour > 0 &&
-		m.globalRateLimits.hourlyPosts >= m.globalRateLimits.PostsPerHour {
-		if !m.globalRateLimits.randomPostsDisabled.Load() {
-			log.Printf("[Maestro] Hourly post limit reached")
-			m.globalRateLimits.randomPostsDisabled.Store(true)
-		}
-		return false
-	}
-	if m.globalRateLimits.PostsPerDay > 0 &&
-		m.globalRateLimits.dailyPosts >= m.globalRateLimits.PostsPerDay {
-		if !m.globalRateLimits.scheduledPostsDisabled.Load() {
-			log.Printf("[Maestro] Daily post limit reached")
-			m.globalRateLimits.scheduledPostsDisabled.Store(true)
-		}
-		return false
-	}
-	return true
-}
-
-func (m *Maestro) RecordPost() {
-	m.globalRateLimits.mu.Lock()
-	m.globalRateLimits.hourlyPosts++
-	m.globalRateLimits.dailyPosts++
-	hourly := m.globalRateLimits.hourlyPosts
-	daily := m.globalRateLimits.dailyPosts
-	m.globalRateLimits.mu.Unlock()
-	m.stats.mu.Lock()
-	m.stats.PostsThisHour = hourly
-	m.stats.PostsToday = daily
-	m.stats.mu.Unlock()
-	log.Printf("[Maestro] Post recorded: %d/hour, %d/day", hourly, daily)
-}
-
-func (m *Maestro) AreRandomPostsDisabled() bool {
-	return m.globalRateLimits.randomPostsDisabled.Load()
-}
-func (m *Maestro) AreScheduledPostsDisabled() bool {
-	return m.globalRateLimits.scheduledPostsDisabled.Load()
 }
 
 func (m *Maestro) resetPlatformDailyStats() {
@@ -730,14 +936,29 @@ func (m *Maestro) updateStats() {
 		}
 	}
 	m.mu.RUnlock()
+
+	// PostsToday/PostsThisHour now come straight from the rate_limits
+	// table (summed across every platform/subtype's "posts" row) instead
+	// of a separate in-memory counter — the DB is the only place post
+	// counts are tracked now, so this is just reading it for display.
+	var postsToday, postsThisHour int
+	if m.db != nil {
+		m.db.QueryRow(`SELECT COALESCE(SUM(current_day_count),0), COALESCE(SUM(current_hour_count),0)
+			FROM rate_limits WHERE action = 'posts'`).Scan(&postsToday, &postsThisHour)
+	}
+
 	m.stats.mu.Lock()
 	m.stats.ActivePlatforms = active
 	m.stats.TotalSentToday = totalSent
+	m.stats.PostsToday = postsToday
+	m.stats.PostsThisHour = postsThisHour
 	m.stats.mu.Unlock()
 }
 
 func (m *Maestro) scheduleNextWake() {
+	m.lifecycleMu.Lock()
 	m.nextWake = time.Now().Add(m.wakeInterval)
+	m.lifecycleMu.Unlock()
 	log.Printf("[Maestro] Next wake: %s", m.nextWake.Format(time.RFC3339))
 }
 
@@ -889,23 +1110,16 @@ func (m *Maestro) startPlatform(platformID, subtypeID string) error {
 
 func (m *Maestro) handlePendingLogin(platformID, subtypeID string, sessionResp *session.Session) error {
 	key := m.platformKey(platformID, subtypeID)
-	cfg := m.configManager.GetConfig()
-	platformCfg, exists := cfg.Platforms[platformID]
-	var platformLimits *config.PlatformLimits
-	if exists {
-		platformLimits = &platformCfg.Limits
-	}
 	listenerConfig := m.getListenerConfig(platformID, subtypeID)
 	_, listenerCancel := context.WithCancel(m.ctx)
 	platformListener := &PlatformListener{
-		PlatformID:     platformID,
-		SubtypeID:      subtypeID,
-		AccountID:      sessionResp.AccountID,
-		Config:         listenerConfig,
-		Session:        sessionResp,
-		Cancel:         listenerCancel,
-		PlatformLimits: platformLimits,
-		DailyStats:     &PlatformDailyStats{LastReset: time.Now()},
+		PlatformID: platformID,
+		SubtypeID:  subtypeID,
+		AccountID:  sessionResp.AccountID,
+		Config:     listenerConfig,
+		Session:    sessionResp,
+		Cancel:     listenerCancel,
+		DailyStats: &PlatformDailyStats{LastReset: time.Now()},
 	}
 	m.listenersMu.Lock()
 	m.listeners[key] = platformListener
@@ -952,12 +1166,6 @@ func (m *Maestro) createListenerWithSession(platformID, subtypeID string, sess *
 	m.stats.SessionsCreated++
 	m.stats.mu.Unlock()
 
-	cfg := m.configManager.GetConfig()
-	platformCfg, exists := cfg.Platforms[platformID]
-	var platformLimits *config.PlatformLimits
-	if exists {
-		platformLimits = &platformCfg.Limits
-	}
 	listenerConfig := m.getListenerConfig(platformID, subtypeID)
 	listenerCtx, listenerCancel := context.WithCancel(m.ctx)
 
@@ -1005,15 +1213,14 @@ func (m *Maestro) createListenerWithSession(platformID, subtypeID string, sess *
 	}
 
 	platformListener := &PlatformListener{
-		PlatformID:     platformID,
-		SubtypeID:      subtypeID,
-		AccountID:      sess.AccountID,
-		Config:         listenerConfig,
-		Session:        sess,
-		Cancel:         listenerCancel,
-		PlatformLimits: platformLimits,
-		DailyStats:     &PlatformDailyStats{LastReset: time.Now()},
-		Collector:      collector,
+		PlatformID: platformID,
+		SubtypeID:  subtypeID,
+		AccountID:  sess.AccountID,
+		Config:     listenerConfig,
+		Session:    sess,
+		Cancel:     listenerCancel,
+		DailyStats: &PlatformDailyStats{LastReset: time.Now()},
+		Collector:  collector,
 	}
 	m.listenersMu.Lock()
 	m.listeners[key] = platformListener
@@ -1146,7 +1353,17 @@ func (m *Maestro) notificationRouter() {
 			if notif == nil {
 				continue
 			}
+			// Track this goroutine so Stop() can wait for it before
+			// closing nnlpResultChan. Otherwise a send on the closed
+			// channel panics the whole process during shutdown.
+			m.notificationWG.Add(1)
 			go func(n *listener.Notification) {
+				defer m.notificationWG.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[Maestro] notification handler panic: %v", r)
+					}
+				}()
 				sandbox.RecordTrace(n.ID, "received", map[string]interface{}{
 					"platform":  n.PlatformID,
 					"subtype":   n.SubtypeID,
@@ -1166,6 +1383,13 @@ func (m *Maestro) notificationRouter() {
 						"ticket_id": result.TicketID,
 					})
 					return
+				}
+				// Use non-blocking send + done-check so a shutdown that
+				// closes nnlpResultChan can never panic.
+				select {
+				case <-m.shutdownChan:
+					log.Printf("[Maestro] dropping result %s during shutdown", result.TicketID)
+				default:
 				}
 				select {
 				case m.nnlpResultChan <- result:
@@ -1577,7 +1801,7 @@ func (m *Maestro) collectWithErrorHandling(ctx context.Context, pl *PlatformList
 		}
 	}
 	pl.statsMu.Lock()
-	if pl.PlatformLimits != nil && pl.DailyStats != nil && m.localStartOfDay(pl.DailyStats.LastReset).Before(m.localStartOfDay(time.Now())) {
+	if pl.DailyStats != nil && m.localStartOfDay(pl.DailyStats.LastReset).Before(m.localStartOfDay(time.Now())) {
 		pl.DailyStats = &PlatformDailyStats{LastReset: time.Now()}
 	}
 	pl.statsMu.Unlock()
@@ -1744,26 +1968,38 @@ func (m *Maestro) isSessionError(errorMsg string) bool {
 func (m *Maestro) disablePlatformInConfig(platformID, subtypeID, reason string) error {
 	key := m.platformKey(platformID, subtypeID)
 	m.createUrgentAlert(platformID, subtypeID, "PLATFORM_DISABLED", reason)
-	cfg := m.configManager.GetConfig()
-	platformCfg, exists := cfg.Platforms[platformID]
-	if !exists {
+	// Use the ConfigManager's locked accessors instead of mutating the live
+	// config map returned by GetConfig(). GetPlatform returns a value copy;
+	// the subtype slice is copied before mutation so the shared backing array
+	// is never written concurrently with readers.
+	pc, ok := m.configManager.GetPlatform(platformID)
+	if !ok {
 		return fmt.Errorf("platform %s not found", platformID)
 	}
-	wasEnabled := platformCfg.Enabled
-	if subtypeID == "account" || len(platformCfg.Subtypes) == 0 {
-		platformCfg.Enabled = false
+	wasEnabled := pc.Enabled
+	if subtypeID == "account" || len(pc.Subtypes) == 0 {
+		if wasEnabled {
+			pc.Enabled = false
+			m.configManager.SetPlatform(platformID, pc)
+			m.configManager.Save()
+		}
 	} else {
-		for i, subtype := range platformCfg.Subtypes {
-			if subtype.ID == subtypeID {
-				wasEnabled = platformCfg.Subtypes[i].Enabled
-				platformCfg.Subtypes[i].Enabled = false
+		subs := make([]config.PlatformSubtype, len(pc.Subtypes))
+		copy(subs, pc.Subtypes)
+		found := false
+		for i := range subs {
+			if subs[i].ID == subtypeID {
+				wasEnabled = subs[i].Enabled
+				subs[i].Enabled = false
+				found = true
 				break
 			}
 		}
-	}
-	if wasEnabled {
-		cfg.Platforms[platformID] = platformCfg
-		m.configManager.Save()
+		if found && wasEnabled {
+			pc.Subtypes = subs
+			m.configManager.SetPlatform(platformID, pc)
+			m.configManager.Save()
+		}
 	}
 	m.stopPlatform(platformID, subtypeID)
 	m.updatePlatformStatus(key, func(status *PlatformStatus) {
@@ -1776,22 +2012,27 @@ func (m *Maestro) disablePlatformInConfig(platformID, subtypeID, reason string) 
 
 func (m *Maestro) enablePlatformInConfig(platformID, subtypeID string) error {
 	key := m.platformKey(platformID, subtypeID)
-	cfg := m.configManager.GetConfig()
-	platformCfg, exists := cfg.Platforms[platformID]
-	if !exists {
+	// Locked accessors only: GetPlatform returns a value copy, and the
+	// subtype slice is copied before mutation so the shared backing array
+	// is never written concurrently with readers of the live config.
+	pc, ok := m.configManager.GetPlatform(platformID)
+	if !ok {
 		return fmt.Errorf("platform %s not found", platformID)
 	}
-	if subtypeID == "account" || len(platformCfg.Subtypes) == 0 {
-		platformCfg.Enabled = true
+	if subtypeID == "account" || len(pc.Subtypes) == 0 {
+		pc.Enabled = true
 	} else {
-		for i, subtype := range platformCfg.Subtypes {
-			if subtype.ID == subtypeID {
-				platformCfg.Subtypes[i].Enabled = true
+		subs := make([]config.PlatformSubtype, len(pc.Subtypes))
+		copy(subs, pc.Subtypes)
+		for i := range subs {
+			if subs[i].ID == subtypeID {
+				subs[i].Enabled = true
 				break
 			}
 		}
+		pc.Subtypes = subs
 	}
-	cfg.Platforms[platformID] = platformCfg
+	m.configManager.SetPlatform(platformID, pc)
 	m.configManager.Save()
 	m.updatePlatformStatus(key, func(status *PlatformStatus) { status.Enabled = true })
 
@@ -2038,20 +2279,16 @@ func (m *Maestro) Resume() error {
 	m.operationMode = cfg.System.OperationMode
 	m.wakeInterval = time.Duration(cfg.System.WakePolicy.IntervalMinutes) * time.Minute
 	m.idleTimeout = time.Duration(cfg.System.WakePolicy.IdleSleepMinutes) * time.Minute
-	m.globalRateLimits.mu.Lock()
-	m.globalRateLimits.PostsPerHour = cfg.Scheduler.RateLimits.PostsPerHour
-	postsPerDay := cfg.Scheduler.RateLimits.PostsPerDay
-	if postsPerDay == 0 {
-		postsPerDay = 50
-	}
-	m.globalRateLimits.PostsPerDay = postsPerDay
-	m.globalRateLimits.mu.Unlock()
+	// Ensure a rate_limits row exists for any platform/subtype that's new
+	// since last run (e.g. added via the dashboard while paused). This no
+	// longer re-seeds limits from config — config carries no rate limit
+	// values anymore, the DB row is authoritative and edited directly.
+	m.bootstrapRateLimits()
 	m.refreshPlatformStatuses(cfg)
-	m.scheduleTimes = nil
-	m.parseScheduleTimes(cfg)
+	m.loadScheduleTimesFromDB()
 	m.lastFired = make(map[string]time.Time)
 	m.stats.mu.Lock()
-	m.stats.RotationMode = cfg.Posting.RotationMode
+	m.stats.RotationMode = m.getRotationMode()
 	m.stats.mu.Unlock()
 	m.starting = sync.Map{}
 	m.paused.Store(false)
@@ -2097,11 +2334,21 @@ func (m *Maestro) Stop() error {
 	m.cancel()
 	close(m.shutdownChan)
 	m.asyncStopAllPlatforms()
+
+	// Shut down the auth-code HTTP server BEFORE waiting on wg.
+	// startAuthCodeHTTP is wg-tracked and blocks in ListenAndServe;
+	// waiting on wg first with Shutdown afterwards deadlocks every
+	// shutdown attempt for the full wg.Wait() timeout.
 	if m.authCodeServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		m.authCodeServer.Shutdown(shutdownCtx)
+		cancel()
 	}
+
+	// Wait for the notification-hander goroutines (not wg-tracked) to
+	// finish before closing nnlpResultChan, preventing panic on send.
+	m.notificationWG.Wait()
+
 	done := make(chan struct{})
 	go func() { m.wg.Wait(); close(done) }()
 	select {
@@ -2112,7 +2359,8 @@ func (m *Maestro) Stop() error {
 		close(m.instructionChan)
 		close(m.errorChan)
 		close(m.controlChan)
-	case <-time.After(10 * time.Second):
+	case <-time.After(15 * time.Second):
+		m.processor.Stop()
 		return fmt.Errorf("shutdown timed out")
 	}
 	m.sessionManager.Close()
@@ -2281,36 +2529,34 @@ func actionCategory(action string) string {
 	}
 }
 
-func resolveSubtypeLimits(pc config.PlatformConfig, sub *config.PlatformSubtype, action string, globalRL config.RateLimits) (hourly, daily int) {
+// rateLimitSubtype maps a real per-account subtype ID to the bucket that was
+// actually seeded into the rate_limits table by bootstrapRateLimits. For
+// WhatsApp specifically, every whatsapp_account_* subtype is collapsed into
+// one shared "whatsapp_account" row (all sub-accounts share one limit) —
+// CanProceed/RecordUsage need to look up that same normalized name, or every
+// lookup misses (no row found → CanProceed silently returns false forever).
+// This mismatch never showed up in testing because sandboxMode bypasses
+// checkRateLimits entirely; it would have blocked every WhatsApp send once
+// running for real.
+func rateLimitSubtype(platform, subtypeID string) string {
+	if platform == "whatsapp" {
+		return "whatsapp_account"
+	}
+	return subtypeID
+}
+
+// defaultRateLimits are only used the very first time a platform+subtype+
+// action row is created. After that the row is authoritative and edited
+// directly (dashboard UI, DB-backed) — config.json no longer carries rate
+// limit values at all, so there's nothing left to "refresh" limits from.
+func defaultRateLimits(action string) (hourly, daily int) {
 	switch action {
 	case "messages":
-		hourly = globalRL.MessagesPerMinute * 60
-		daily = globalRL.MessagesPerMinute * 60 * 24
-		if pc.Limits.DailyMessages > 0 {
-			daily = pc.Limits.DailyMessages
-			hourly = daily / 24
-		}
-		if sub != nil && sub.Limits.DailyMessages > 0 {
-			daily = sub.Limits.DailyMessages
-			hourly = daily / 24
-		}
+		return 30, 200
 	case "posts":
-		hourly = globalRL.PostsPerHour
-		daily = globalRL.PostsPerDay
-		if pc.Limits.HourlyPosts > 0 {
-			hourly = pc.Limits.HourlyPosts
-		}
-		if pc.Limits.DailyPosts > 0 {
-			daily = pc.Limits.DailyPosts
-		}
-		if sub != nil && sub.Limits.HourlyPosts > 0 {
-			hourly = sub.Limits.HourlyPosts
-		}
-		if sub != nil && sub.Limits.DailyPosts > 0 {
-			daily = sub.Limits.DailyPosts
-		}
+		return 2, 5
 	}
-	return
+	return 0, 0
 }
 
 func (m *Maestro) migrateRateLimitsTable() {
@@ -2371,7 +2617,6 @@ func (m *Maestro) bootstrapRateLimits() {
 		return
 	}
 	cfg := m.configManager.GetConfig()
-	globalRL := cfg.Scheduler.RateLimits
 	actions := []string{"messages", "posts"}
 
 	m.db.Exec(`DELETE FROM rate_limits WHERE action NOT IN ('messages','posts')`)
@@ -2383,8 +2628,19 @@ func (m *Maestro) bootstrapRateLimits() {
 		subtypes := pc.Subtypes
 		if len(subtypes) == 0 {
 			for _, act := range actions {
-				h, d := resolveSubtypeLimits(pc, nil, act, globalRL)
+				h, d := defaultRateLimits(act)
 				m.insertRateLimitRow(platformID, "", act, h, d)
+			}
+			continue
+		}
+		// Normalize WhatsApp: all whatsapp_account_* → whatsapp_account
+		// (see rateLimitSubtype) — every WhatsApp sub-account shares one
+		// combined limit, so only one row is created regardless of how
+		// many enabled subtypes exist.
+		if platformID == "whatsapp" {
+			for _, act := range actions {
+				h, d := defaultRateLimits(act)
+				m.insertRateLimitRow("whatsapp", "whatsapp_account", act, h, d)
 			}
 			continue
 		}
@@ -2394,7 +2650,7 @@ func (m *Maestro) bootstrapRateLimits() {
 				continue
 			}
 			for _, act := range actions {
-				h, d := resolveSubtypeLimits(pc, sub, act, globalRL)
+				h, d := defaultRateLimits(act)
 				m.insertRateLimitRow(platformID, sub.ID, act, h, d)
 			}
 		}
@@ -2402,111 +2658,132 @@ func (m *Maestro) bootstrapRateLimits() {
 }
 
 func (m *Maestro) insertRateLimitRow(platform, subtype, action string, hourly, daily int) {
+	// INSERT-only: creates the row with sane defaults if missing. Once a
+	// row exists it's edited directly via the dashboard — this must never
+	// overwrite hourly_limit/daily_limit on an existing row (that would
+	// silently blow away an admin's saved limit on every Resume/restart).
 	_, err := m.db.Exec(`
 		INSERT OR IGNORE INTO rate_limits
-			(platform, subtype, action, hourly_limit, daily_limit,
-			 current_hour_count, current_day_count,
-			 last_reset_hour, last_reset_day)
-		VALUES (?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		(platform, subtype, action, hourly_limit, daily_limit,
+		 current_hour_count, current_day_count,
+		 last_reset_hour, last_reset_day)
+		VALUES (?,?,?,?,?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 		platform, subtype, action, hourly, daily)
 	if err != nil {
 		log.Printf("[Maestro] bootstrapRateLimits insert error for %s/%s/%s: %v", platform, subtype, action, err)
-		return
 	}
-	m.db.Exec(`
-		UPDATE rate_limits SET hourly_limit=?, daily_limit=?
-		WHERE platform=? AND subtype=? AND action=?`,
-		hourly, daily, platform, subtype, action)
 }
 
+// CanProceed atomically checks AND reserves capacity for platform+subtype+
+// action in one step. Previously this was two separate calls (CanProceed to
+// check, RecordUsage to increment) with a real gap between them — two
+// concurrent compiles for the same platform/subtype/action could both read
+// "4 of 5 used", both pass, and both increment, landing at 6/5. Folding the
+// reset-rollover + limit check + increment into a single guarded UPDATE
+// closes that gap: the WHERE clause only lets the increment happen if the
+// row is still under its limit at the moment SQLite executes the write, and
+// SQLite serializes writes to a single row.
+//
+// A caller that gets true=proceed has ALREADY consumed one unit of the
+// limit — there's no separate RecordUsage step to call afterward. If the
+// caller ends up not actually using the reservation (e.g. compile failed
+// before anything was sent), call ReleaseUsage to give the slot back.
 func (m *Maestro) CanProceed(platform, subtypeID, action string) (bool, time.Duration) {
 	cat := actionCategory(action)
 	if cat == "" || m.db == nil {
 		return true, 0
 	}
+	subtypeID = rateLimitSubtype(platform, subtypeID)
 	now := time.Now()
 
-	tx, err := m.db.Begin()
+	// Roll over hour/day windows first. These only touch a row whose
+	// window has actually elapsed, so they're safe to run unconditionally
+	// before every reservation attempt.
+	if _, err := m.db.Exec(`
+		UPDATE rate_limits SET current_hour_count = 0, last_reset_hour = CURRENT_TIMESTAMP
+		WHERE platform=? AND subtype=? AND action=?
+		  AND last_reset_hour IS NOT NULL
+		  AND (strftime('%s','now') - strftime('%s', last_reset_hour)) >= 3600`,
+		platform, subtypeID, cat); err != nil {
+		log.Printf("[Maestro] CanProceed hourly rollover error: %v", err)
+	}
+	if _, err := m.db.Exec(`
+		UPDATE rate_limits SET current_day_count = 0, last_reset_day = CURRENT_TIMESTAMP
+		WHERE platform=? AND subtype=? AND action=?
+		  AND last_reset_day IS NOT NULL
+		  AND date(last_reset_day) != date('now')`,
+		platform, subtypeID, cat); err != nil {
+		log.Printf("[Maestro] CanProceed daily rollover error: %v", err)
+	}
+
+	res, err := m.db.Exec(`
+		UPDATE rate_limits
+		SET current_hour_count = current_hour_count + 1,
+		    current_day_count  = current_day_count  + 1
+		WHERE platform=? AND subtype=? AND action=?
+		  AND (hourly_limit <= 0 OR current_hour_count < hourly_limit)
+		  AND (daily_limit  <= 0 OR current_day_count  < daily_limit)`,
+		platform, subtypeID, cat)
 	if err != nil {
+		log.Printf("[Maestro] CanProceed reserve error for %s/%s/%s: %v", platform, subtypeID, cat, err)
+		return false, 0
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
 		return true, 0
 	}
-	defer tx.Rollback()
 
+	// Reservation didn't happen — either there's no row at all for this
+	// platform/subtype/action (never bootstrapped: fail closed rather than
+	// silently allowing unlimited usage, matching the old behavior), or a
+	// real limit was hit. Read current values to report a useful wait time.
 	var hourlyLimit, dailyLimit, hourCount, dayCount int
-	var lastHourReset, lastDayReset string
-	err = tx.QueryRow(`
-		SELECT hourly_limit, daily_limit, current_hour_count, current_day_count,
-		       COALESCE(last_reset_hour,''), COALESCE(last_reset_day,'')
+	scanErr := m.db.QueryRow(`
+		SELECT hourly_limit, daily_limit, current_hour_count, current_day_count
 		FROM rate_limits WHERE platform=? AND subtype=? AND action=?`,
-		platform, subtypeID, cat).
-		Scan(&hourlyLimit, &dailyLimit, &hourCount, &dayCount, &lastHourReset, &lastDayReset)
-	if err != nil {
-		tx.Rollback()
-		return true, 0
+		platform, subtypeID, cat).Scan(&hourlyLimit, &dailyLimit, &hourCount, &dayCount)
+	if scanErr != nil {
+		log.Printf("[Maestro] CanProceed: no rate_limits row for %s/%s/%s — blocking", platform, subtypeID, cat)
+		return false, time.Minute
 	}
-
-	resetHour := false
-	resetDay := false
-	if t, e := time.Parse("2006-01-02 15:04:05", lastHourReset); e == nil && now.Sub(t) >= time.Hour {
-		hourCount = 0
-		resetHour = true
-	}
-	if t, e := time.Parse("2006-01-02 15:04:05", lastDayReset); e == nil {
-		y1, mo1, d1 := t.Date()
-		y2, mo2, d2 := now.Date()
-		if y1 != y2 || mo1 != mo2 || d1 != d2 {
-			dayCount = 0
-			resetDay = true
-		}
-	}
-	if resetHour || resetDay {
-		q := `UPDATE rate_limits SET current_hour_count=?, current_day_count=?`
-		args := []interface{}{hourCount, dayCount}
-		if resetHour {
-			q += `, last_reset_hour=CURRENT_TIMESTAMP`
-		}
-		if resetDay {
-			q += `, last_reset_day=CURRENT_TIMESTAMP`
-		}
-		q += ` WHERE platform=? AND subtype=? AND action=?`
-		args = append(args, platform, subtypeID, cat)
-		tx.Exec(q, args...)
-	}
-	tx.Commit()
-
 	if hourlyLimit > 0 && hourCount >= hourlyLimit {
 		return false, time.Hour - now.Sub(now.Truncate(time.Hour))
 	}
-	if dailyLimit > 0 && dayCount >= dailyLimit {
-		midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
-		return false, midnight.Sub(now)
-	}
-	return true, 0
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	return false, midnight.Sub(now)
 }
 
-func (m *Maestro) RecordUsage(platform, subtypeID, action string) {
+// ReleaseUsage gives back a reservation made by CanProceed when the caller
+// ends up not using it (e.g. the instruction failed to compile after the
+// slot was already reserved). Best-effort, floors at 0.
+func (m *Maestro) ReleaseUsage(platform, subtypeID, action string) {
 	cat := actionCategory(action)
 	if cat == "" || m.db == nil {
 		return
 	}
-	_, err := m.db.Exec(`
+	subtypeID = rateLimitSubtype(platform, subtypeID)
+	if _, err := m.db.Exec(`
 		UPDATE rate_limits
-		SET current_hour_count = current_hour_count + 1,
-		    current_day_count  = current_day_count  + 1
-		WHERE platform=? AND subtype=? AND action=?`, platform, subtypeID, cat)
-	if err != nil {
-		log.Printf("[Maestro] RecordUsage DB error for %s/%s/%s: %v", platform, subtypeID, cat, err)
-	}
-	if cat == "posts" {
-		m.RecordPost()
+		SET current_hour_count = MAX(current_hour_count - 1, 0),
+		    current_day_count  = MAX(current_day_count  - 1, 0)
+		WHERE platform=? AND subtype=? AND action=?`, platform, subtypeID, cat); err != nil {
+		log.Printf("[Maestro] ReleaseUsage DB error for %s/%s/%s: %v", platform, subtypeID, cat, err)
 	}
 }
+
+// RecordUsage is kept only so any external caller still wired to the old
+// two-step check-then-record pattern doesn't fail to compile. CanProceed
+// now reserves atomically on its own, so calling this afterward would
+// double-count — it's a deliberate no-op. New code should just call
+// CanProceed (and ReleaseUsage on failure, if applicable) and nothing else.
+func (m *Maestro) RecordUsage(platform, subtypeID, action string) {}
 
 func (m *Maestro) GetConfigManager() *config.ConfigManager {
 	return m.configManager
 }
 
 func (m *Maestro) GetOperationMode() string {
+	m.lifecycleMu.RLock()
+	defer m.lifecycleMu.RUnlock()
 	return m.operationMode
 }
 

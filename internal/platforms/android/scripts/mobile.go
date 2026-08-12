@@ -1,7 +1,7 @@
 // main_mobile.go - Mobile entry point for SailStream
 // Auto-generated when mobile environment detected
 
-package scripts
+package main
 
 import (
 	"fmt"

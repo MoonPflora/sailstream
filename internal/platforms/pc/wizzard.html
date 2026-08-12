@@ -66,7 +66,7 @@ input,select,textarea{background:var(--bg1);border:1px solid var(--border);borde
 input:focus,select:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 8px rgba(86,212,221,.1)}
 input[readonly]{background:var(--bg0);color:var(--fg-dim);cursor:not-allowed}
 textarea{resize:vertical;min-height:76px}
-select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;padding-right:26px}
+select{-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;padding-right:26px}
 .checkbox-row{display:flex;align-items:center;gap:7px}
 .checkbox-row input[type=checkbox]{width:14px;height:14px;accent-color:var(--cyan)}
 .checkbox-row label{text-transform:none;letter-spacing:0;font-size:.8rem;color:var(--fg);cursor:pointer;font-family:var(--sans);font-weight:600}
@@ -107,7 +107,7 @@ tr:hover td{background:var(--bg3)}
 .pill-blue{background:var(--blue-dim);color:var(--blue)}
 .pill-amber{background:var(--amber-dim);color:var(--amber)}
 .pill-gray{background:var(--bg3);color:var(--fg-dim)}
-.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:100;display:none;justify-content:center;align-items:center;backdrop-filter:blur(3px)}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:100;display:none;justify-content:center;align-items:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .modal-backdrop.open{display:flex}
 .modal{background:var(--bg1);border:1px solid var(--border-hi);border-radius:8px;width:min(750px,94vw);max-height:92vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,.5);display:flex;flex-direction:column}
 .modal-sm{max-width:520px}
@@ -220,6 +220,7 @@ tr:hover td{background:var(--bg3)}
     <button class="nav-btn" onclick="nav('store')">Store</button>
     <button class="nav-btn" onclick="nav('system')">System</button>
     <button class="nav-btn" onclick="nav('paths')">Paths</button>
+    <button class="nav-btn" onclick="nav('shipping')">Shipping Costs</button>
     <button class="nav-btn" onclick="nav('review')">Review</button>
     <div class="nav-section">Image Recognition</div>
     <button class="nav-btn" onclick="nav('ir')">Train / Deploy</button>
@@ -415,6 +416,12 @@ tr:hover td{background:var(--bg3)}
           <div class="form-group"><label>To (HH:MM)</label><input name="quiet_to" placeholder="08:00" oninput="patchSystem()"></div>
         </div>
       </div>
+      <div class="card"><div class="card-title">LLM Rate Limits</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Tokens Per Minute</label><input name="llm_tokens_per_minute" type="number" placeholder="e.g. 1000" oninput="patchSystem()"></div>
+          <div class="form-group"><label>Cost Per Minute (USD)</label><input name="llm_cost_per_minute" type="number" step="0.001" placeholder="e.g. 0.01" oninput="patchSystem()"></div>
+        </div>
+      </div>
     </form>
   </div>
 
@@ -438,6 +445,38 @@ tr:hover td{background:var(--bg3)}
         </div>
       </div>
     </form>
+  </div>
+
+  <!-- SHIPPING -->
+  <div class="page" id="page-shipping">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <h3 style="margin:0;color:var(--fg-hi)">Shipping Costs</h3>
+      <span style="font-size:.72rem;color:var(--fg-dim);font-family:var(--mono)" id="ship-summary"></span>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">Add / Edit City Rate</div>
+      <div class="form-grid">
+        <div class="form-group"><label>City</label><input id="ship-city" placeholder="e.g. Erbil"></div>
+        <div class="form-group"><label>Cost</label><input id="ship-cost" type="number" min="0" step="0.01" value="0"></div>
+      </div>
+      <input type="hidden" id="ship-edit-id">
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary" onclick="saveShipping()">Save</button>
+        <button class="btn btn-ghost" id="ship-cancel-btn" style="display:none" onclick="cancelShipEdit()">Cancel</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Saved City Rates</div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="text-align:left;padding:6px 8px;font-size:.72rem;color:var(--fg-dim);border-bottom:1px solid var(--border)">City</th>
+          <th style="text-align:right;padding:6px 8px;font-size:.72rem;color:var(--fg-dim);border-bottom:1px solid var(--border)">Cost</th>
+          <th style="text-align:left;padding:6px 8px;font-size:.72rem;color:var(--fg-dim);border-bottom:1px solid var(--border)">Updated</th>
+          <th style="text-align:center;padding:6px 8px;font-size:.72rem;color:var(--fg-dim);border-bottom:1px solid var(--border)">Actions</th>
+        </tr></thead>
+        <tbody id="ship-tbody"></tbody>
+      </table>
+    </div>
   </div>
 
   <!-- REVIEW -->
@@ -1039,7 +1078,7 @@ var pageNames={
   dashboard:'Dashboard',db:'Database Browser',products:'Products',
   scheduled:'Scheduled Posts',platforms:'Platforms',ai:'AI',
   posting:'Posting & Scheduler',store:'Store',system:'System',
-  paths:'Paths',review:'Review',ir:'Image Recognition'
+  paths:'Paths',shipping:'Shipping Costs',review:'Review',ir:'Image Recognition'
 };
 
 function nav(page){
@@ -1058,6 +1097,7 @@ function nav(page){
   if(page==='store')     fillStoreForm();
   if(page==='system')    fillSystemForm();
   if(page==='paths')     fillPathsForm();
+  if(page==='shipping')  loadShipping();
   if(page==='review')    showReview();
   if(page==='dashboard') loadDashboard();
   if(page==='db')        loadDBTables();
@@ -1762,6 +1802,8 @@ function fillSystemForm(){
   setVal(f,'operation_mode',sys.operation_mode||'scheduled_wake');
   setVal(f,'interval_minutes',(sys.wake_policy&&sys.wake_policy.interval_minutes)||5);
   setVal(f,'idle_sleep_minutes',(sys.wake_policy&&sys.wake_policy.idle_sleep_minutes)||60);
+  setVal(f,'llm_tokens_per_minute',sys.llm_tokens_per_minute||'');
+  setVal(f,'llm_cost_per_minute',sys.llm_cost_per_minute||'');
   var qh=(cfg.scheduler&&cfg.scheduler.quiet_hours)||{};
   document.getElementById('sys-quiet-enabled').checked=!!qh.enabled;
   setVal(f,'quiet_from',qh.from||'22:00');
@@ -1775,6 +1817,8 @@ function patchSystem(){
   cfg.system.operation_mode=gv(f,'operation_mode');
   cfg.system.wake_policy.interval_minutes=parseInt(gv(f,'interval_minutes'))||5;
   cfg.system.wake_policy.idle_sleep_minutes=parseInt(gv(f,'idle_sleep_minutes'))||60;
+  cfg.system.llm_tokens_per_minute=parseInt(gv(f,'llm_tokens_per_minute'))||0;
+  cfg.system.llm_cost_per_minute=parseFloat(gv(f,'llm_cost_per_minute'))||0;
   if(!cfg.scheduler) cfg.scheduler={rate_limits:{},quiet_hours:{}};
   if(!cfg.scheduler.quiet_hours) cfg.scheduler.quiet_hours={};
   cfg.scheduler.quiet_hours.enabled=document.getElementById('sys-quiet-enabled').checked;
@@ -1889,6 +1933,60 @@ async function deleteExistingImage(imgId){
   if(!confirm('Delete this image?')) return;
   try{await api('/api/products/images/'+editingProductId+'/'+imgId,'DELETE');var p=await api('/api/products/'+editingProductId);renderExistingImages(p.images||[])}
   catch(e){toast('Error: '+e.message,'err')}
+}
+
+var allShipping=[];
+async function loadShipping(){
+  try{
+    allShipping=await api('/api/shipping');
+    renderShipping();
+    document.getElementById('ship-summary').textContent=allShipping.length+' cities';
+  }catch(e){document.getElementById('ship-tbody').innerHTML='<tr><td colspan="4" class="empty-state">'+esc(e.message)+'</td></tr>'}
+}
+function renderShipping(){
+  var tbody=document.getElementById('ship-tbody');
+  if(!allShipping.length){tbody.innerHTML='<tr><td colspan="4" class="empty-state">No shipping rates yet.</td></tr>';return}
+  tbody.innerHTML=allShipping.map(function(s){
+    return '<tr>'
+      +'<td style="padding:6px 8px">'+esc(s.city)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">'+Number(s.cost).toLocaleString()+'</td>'
+      +'<td style="padding:6px 8px;color:var(--fg-dim);font-size:.72rem">'+esc(s.updated_at||'')+'</td>'
+      +'<td style="padding:6px 8px;text-align:center"><div style="display:flex;gap:4px;justify-content:center"><button class="btn btn-ghost btn-sm" onclick="editShip('+s.id+')">Edit</button><button class="btn btn-danger btn-sm" onclick="deleteShip('+s.id+','+JSON.stringify(s.city)+')">Del</button></div></td>'
+      +'</tr>';
+  }).join('');
+}
+function editShip(id){
+  var s=allShipping.find(function(x){return x.id===id});
+  if(!s) return;
+  document.getElementById('ship-edit-id').value=s.id;
+  document.getElementById('ship-city').value=s.city;
+  document.getElementById('ship-cost').value=s.cost;
+  document.getElementById('ship-cancel-btn').style.display='';
+}
+function cancelShipEdit(){
+  document.getElementById('ship-edit-id').value='';
+  document.getElementById('ship-city').value='';
+  document.getElementById('ship-cost').value='0';
+  document.getElementById('ship-cancel-btn').style.display='none';
+}
+async function saveShipping(){
+  var city=v('ship-city').trim();
+  var cost=parseFloat(v('ship-cost'))||0;
+  if(!city){toast('City is required','err');return}
+  if(cost<0){toast('Cost cannot be negative','err');return}
+  var editId=v('ship-edit-id');
+  try{
+    if(editId){await api('/api/shipping/'+editId,'PUT',{city:city,cost:cost})}
+    else{await api('/api/shipping','POST',{city:city,cost:cost})}
+    toast(editId?'Shipping rate updated':'Shipping rate added');
+    cancelShipEdit();
+    loadShipping();
+  }catch(e){toast('Save failed: '+e.message,'err')}
+}
+async function deleteShip(id,city){
+  if(!confirm('Delete shipping rate for "'+city+'"?')) return;
+  try{await api('/api/shipping/'+id,'DELETE');toast('Deleted: '+city);loadShipping()}
+  catch(e){toast('Delete failed: '+e.message,'err')}
 }
 
 var allPosts=[];

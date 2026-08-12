@@ -52,6 +52,7 @@ func main() {
 		runWizard()
 		return
 	}
+	manager.SetBaseDir(baseDir)
 
 	// 3. Initialize environment
 	env = enviroment.NewEnvironment(manager.GetConfig())
@@ -88,10 +89,12 @@ func main() {
 		log.Printf("⚠️ Failed to create directories: %v", err)
 	}
 
-	// 8. Get database path and check if exists
+	// 8. Get database path (resolve relative to baseDir) and check if exists
 	dbPath := manager.GetDatabasePath()
 	if dbPath == "" {
 		dbPath = filepath.Join(baseDir, "data", "database.db")
+	} else if !filepath.IsAbs(dbPath) {
+		dbPath = filepath.Join(baseDir, dbPath)
 	}
 
 	// 9. Initialize database only if doesn't exist
@@ -144,7 +147,7 @@ func isMobileEnvironment() bool {
 }
 
 func routeToMobileMain() {
-	mobileMainPath := filepath.Join(baseDir, "platforms", "android", "scripts", "mobile.go")
+	mobileMainPath := filepath.Join(baseDir, "internal", "platforms", "android", "scripts", "mobile.go")
 
 	if !fileExists(mobileMainPath) {
 		log.Printf("❌ Mobile entry point not found at: %s", mobileMainPath)
@@ -172,7 +175,7 @@ func routeToMobileMain() {
 }
 
 func createMobileEntryPoint() {
-	mobileDir := filepath.Join(baseDir, "platforms", "android", "scripts")
+	mobileDir := filepath.Join(baseDir, "internal", "platforms", "android", "scripts")
 	if err := os.MkdirAll(mobileDir, 0755); err != nil {
 		log.Printf("❌ Failed to create mobile directory: %v", err)
 		return
@@ -233,7 +236,7 @@ func startMobileDashboard(baseDir string) {
 }
 
 func startMobileWizard(baseDir string) {
-	pcWizard := filepath.Join(baseDir, "platforms", "pc", "wizzard.go")
+	pcWizard := filepath.Join(baseDir, "internal", "platforms", "pc", "wizzard.go")
 	if fileExists(pcWizard) {
 		log.Printf("🧙 Starting wizard: %s", pcWizard)
 		configPath := filepath.Join(baseDir, "internal", "config", "config.json")
@@ -434,9 +437,7 @@ func initConfig(path string) *config.ConfigManager {
 }
 
 func isEmptyConfig(manager *config.ConfigManager) bool {
-	return manager.GetStoreName() == "" ||
-		manager.GetAIProvider() == "" ||
-		manager.GetTimezone() == ""
+	return manager.GetStoreName() == ""
 }
 
 // ============ PATH CHECKING ============
@@ -480,24 +481,34 @@ func CheckAllPaths() bool {
 		return false
 	}
 
+	resolve := func(path string) string {
+		if path == "" {
+			return path
+		}
+		if filepath.IsAbs(path) {
+			return path
+		}
+		return filepath.Join(baseDir, path)
+	}
+
 	paths := []struct {
 		name string
 		path string
 	}{
-		{"Logs", manager.GetLogsPath()},
-		{"Config", manager.GetConfigPath()},
-		{"Cache", manager.GetCachePath()},
-		{"Media", manager.GetMediaPath()},
-		{"Models", manager.GetModelsPath()},
-		{"Temp", manager.GetTempPath()},
-		{"Sessions", manager.GetSessionsPath()},
-		{"Database", manager.GetDatabasePath()},
-		{"Backup", manager.GetBackupPath()},
-		{"Post Images", manager.GetPostImagesPath()},
-		{"Product Images", manager.GetProductImagesPath()},
-		{"Post Videos", manager.GetPostVideosPath()},
-		{"Scheduled Posts", manager.GetScheduledPostsPath()},
-		{"Training Images", manager.GetTrainingImagesPath()},
+		{"Logs", resolve(manager.GetLogsPath())},
+		{"Config", resolve(manager.GetConfigPath())},
+		{"Cache", resolve(manager.GetCachePath())},
+		{"Media", resolve(manager.GetMediaPath())},
+		{"Models", resolve(manager.GetModelsPath())},
+		{"Temp", resolve(manager.GetTempPath())},
+		{"Sessions", resolve(manager.GetSessionsPath())},
+		{"Database", resolve(manager.GetDatabasePath())},
+		{"Backup", resolve(manager.GetBackupPath())},
+		{"Post Images", resolve(manager.GetPostImagesPath())},
+		{"Product Images", resolve(manager.GetProductImagesPath())},
+		{"Post Videos", resolve(manager.GetPostVideosPath())},
+		{"Scheduled Posts", resolve(manager.GetScheduledPostsPath())},
+		{"Training Images", resolve(manager.GetTrainingImagesPath())},
 	}
 
 	allValid := true
@@ -575,22 +586,28 @@ func fileExists(path string) bool {
 }
 
 func restartApp() {
-	exe, err := os.Executable()
-	if err != nil {
-		mainPath := filepath.Join(baseDir, "main.go")
-		cmd := exec.Command("go", "run", mainPath)
-		cmd.Dir = baseDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Start()
-		os.Exit(0)
+	// Build a fresh binary to avoid the "Access is denied" Windows build lock
+	// that occurs when go run tries to build while a previous go run temp exe
+	// is still running.
+	tmpExe := filepath.Join(os.TempDir(), "sailstream_restart.exe")
+	buildCmd := exec.Command("go", "build", "-o", tmpExe, ".")
+	buildCmd.Dir = baseDir
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		log.Printf("❌ Restart build failed: %v\n%s", err, string(output))
+		// Fall back to the wizard path (avoids infinite loop)
+		log.Println("⚠️ Restart failed, re-running wizard...")
+		runWizard()
+		return
 	}
 
-	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd := exec.Command(tmpExe)
 	cmd.Dir = baseDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		log.Printf("❌ Restart failed: %v", err)
+		os.Exit(1)
+	}
 	os.Exit(0)
 }
 

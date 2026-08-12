@@ -13,8 +13,8 @@ import (
 )
 
 type Environment struct {
-	isTermux       bool   `json:"is_termux"`
-	isMobile       bool   `json:"is_mobile"`
+	isTermux       bool
+	isMobile       bool
 	OS             string `json:"os"`
 	Arch           string `json:"arch"`
 	BrowserPath    string `json:"browser_path"` // CDP‑compatible browser (Edge/Chrome/Brave/Chromium)

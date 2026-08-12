@@ -172,7 +172,7 @@ button{font-family:var(--sans);cursor:pointer;border:none;outline:none}
 details.cfg-block{background:var(--bg2);border:1px solid var(--border);
   border-radius:var(--radius);padding:8px 12px;margin-top:8px}
 details.cfg-block summary{font-size:12px;font-weight:700;cursor:pointer;
-  color:var(--cyan);user-select:none;list-style:none}
+  color:var(--cyan);-webkit-user-select:none;user-select:none;list-style:none}
 details.cfg-block summary::before{content:'▶ ';font-size:10px}
 details.cfg-block[open] summary::before{content:'▼ '}
 details.cfg-block pre{font-family:var(--mono);font-size:10px;margin-top:8px;
@@ -194,7 +194,7 @@ details.cfg-block pre{font-family:var(--mono);font-size:10px;margin-top:8px;
 .clickable-cell{cursor:pointer;transition:background 0.1s}
 .clickable-cell:hover{background:var(--bg3) !important;text-decoration:underline;text-decoration-color:var(--cyan)}
 
-.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1000;display:none;justify-content:center;align-items:center;backdrop-filter:blur(3px)}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1000;display:none;justify-content:center;align-items:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .modal-backdrop.open{display:flex}
 .modal{background:var(--bg1);border:1px solid var(--border-hi);border-radius:8px;width:min(800px,94vw);
   max-height:92vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,.5)}
@@ -207,6 +207,13 @@ details.cfg-block pre{font-family:var(--mono);font-size:10px;margin-top:8px;
 .modal .form-group input,.modal .form-group select,.modal .form-group textarea{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:4px;
   color:var(--fg);font-family:var(--mono);font-size:11px;padding:6px 8px}
 .modal .ro-show{background:var(--bg0);color:var(--fg-dim);cursor:not-allowed}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.card-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-dim);margin-bottom:10px}
+.form-grid{display:grid;gap:10px}
+.form-group{margin-bottom:0}
+.form-group label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-dim);display:block;margin-bottom:4px}
+.form-group input,.form-group select,.form-group textarea{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:4px;
+  color:var(--fg);font-family:var(--mono);font-size:11px;padding:6px 8px;box-sizing:border-box}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:var(--radius);
   font-size:11px;font-weight:700;cursor:pointer;transition:all .15s}
 .btn-primary{background:var(--cyan);color:var(--bg0);border:none}
@@ -245,6 +252,8 @@ details.cfg-block pre{font-family:var(--mono);font-size:10px;margin-top:8px;
     <span class="nav-badge" id="urgent-badge" style="display:none">0</span></div>
   <div class="nav-item" data-panel="orders" onclick="showPanel('orders')">
     Orders</div>
+  <div class="nav-item" data-panel="shipping" onclick="showPanel('shipping')">
+    Shipping</div>
   <div class="nav-item" data-panel="scheduled" onclick="showPanel('scheduled')">
     Scheduled Posts</div>
   <div class="nav-item" data-panel="logs" onclick="showPanel('logs')">
@@ -326,8 +335,33 @@ details.cfg-block pre{font-family:var(--mono);font-size:10px;margin-top:8px;
     <button class="top-btn" onclick="loadOrders()">Refresh</button>
   </div>
   <div class="scroll" style="padding:0">
-    <table class="data-table"><thead><tr><th>ID</th><th>User</th><th>Platform</th><th>Status</th><th>Total</th><th>Date</th></tr></thead>
+    <table class="data-table"><thead><tr><th>ID</th><th>User</th><th>Platform</th><th>Status</th><th>Total</th><th>Date</th><th>Action</th></tr></thead>
     <tbody id="ord-tbody"></tbody></table>
+  </div>
+</div>
+
+<div class="panel" id="panel-shipping">
+  <div class="panel-header">
+    <span class="panel-title">Shipping</span>
+    <span class="panel-sub" id="ship-summary"></span>
+    <span class="spacer"></span>
+    <button class="top-btn" onclick="loadShippingDash()">Refresh</button>
+  </div>
+  <div class="scroll">
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">Add / Edit City Rate</div>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group"><label>City</label><input id="ship-city" placeholder="e.g. Erbil"></div>
+        <div class="form-group"><label>Cost (IQD)</label><input id="ship-cost" type="number" min="0" step="0.01" value="0"></div>
+      </div>
+      <input type="hidden" id="ship-edit-id">
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary" onclick="saveShippingDash()">Save</button>
+        <button class="btn btn-ghost" id="ship-cancel-btn" style="display:none" onclick="cancelShipEditDash()">Cancel</button>
+      </div>
+    </div>
+    <table class="data-table"><thead><tr><th>City</th><th>Cost</th><th>Updated</th><th>Actions</th></tr></thead>
+    <tbody id="ship-tbody"></tbody></table>
   </div>
 </div>
 
@@ -369,15 +403,29 @@ details.cfg-block pre{font-family:var(--mono);font-size:10px;margin-top:8px;
 <div class="modal-backdrop" id="full-value-modal">
   <div class="modal">
     <div class="modal-header">
-      <h2 id="full-value-title">Full Value</h2>
-      <button class="btn btn-ghost btn-sm" onclick="closeModal('full-value-modal')">✕</button>
+      <h2>Full Value</h2>
+      <button class="btn btn-ghost" onclick="closeModal('full-value-modal')">Close</button>
     </div>
     <div class="modal-body">
-      <div class="form-group">
-        <label id="full-value-label">Column:</label>
-        <pre id="full-value-content" style="background:var(--bg0);padding:12px;border-radius:var(--radius);overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--mono);font-size:12px;margin-top:8px"></pre>
-      </div>
+      <label id="full-value-label">Column:</label>
+      <pre id="full-value-content" style="background:var(--bg0);padding:12px;border-radius:var(--radius);overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--mono);font-size:12px;margin-top:8px"></pre>
     </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="order-detail-modal">
+  <div class="modal" style="width:min(760px,94vw);max-height:88vh;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <h2>Order <span id="order-detail-title"></span></h2>
+      <button class="btn btn-ghost" onclick="closeModal('order-detail-modal')">Close</button>
+    </div>
+    <div class="modal-body" id="order-detail-body" style="overflow-y:auto"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveOrderEdit()">Save Changes</button>
+      <button class="btn btn-ghost" onclick="closeModal('order-detail-modal')">Close</button>
+    </div>
+  </div>
+</div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="copyToClipboard()">Copy to Clipboard</button>
       <button class="btn btn-ghost" onclick="closeModal('full-value-modal')">Close</button>
@@ -461,6 +509,7 @@ function showPanel(name, arg) {
   }
 
   if (name === 'orders') loadOrders();
+  if (name === 'shipping') loadShippingDash();
   if (name === 'config') loadConfig();
   if (name === 'logs') loadSystemLog();
   if (name === 'urgent') loadUrgent();
@@ -650,7 +699,7 @@ function renderState(state) {
 }
 
 function renderOverview(d) {
-  const {stats, db, rate_limits} = d;
+  const {stats, db, rate_limits, llm} = d;
   if (!stats) return;
   const uptime = stats.start_time ? elapsed(stats.start_time) : '—';
   document.getElementById('ov-uptime').textContent = 'up ' + uptime;
@@ -703,6 +752,15 @@ function renderOverview(d) {
           </tr></thead>
           <tbody>${rlRows}</tbody>
         </table>
+      </div>`;
+  }
+
+  if (llm) {
+    document.getElementById('ov-scroll').innerHTML += `
+      <div class="section-label">LLM Rate Limits</div>
+      <div class="grid-4">
+        <div class="stat-card"><div class="label">Tokens / min</div><div class="value">${llm.tokens_per_minute || 0}</div><div class="sub">max tokens per minute</div></div>
+        <div class="stat-card warn"><div class="label">Cost / min</div><div class="value">${(llm.cost_per_minute || 0).toFixed(4)}</div><div class="sub">dollars per minute</div></div>
       </div>`;
   }
 
@@ -878,9 +936,193 @@ async function loadOrders() {
     const items = await r.json();
     document.getElementById('ord-summary').textContent = items.length + ' total orders';
     const tbody = document.getElementById('ord-tbody');
-    if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No orders</td></tr>'; return; }
-    tbody.innerHTML = items.map(o => '<tr><td>' + escapeHtml(o.id) + '</td><td>' + escapeHtml(o.user_id) + '</td><td>' + escapeHtml(o.platform) + '</td><td><span class="badge ' + o.status + '">' + o.status.toUpperCase() + '</span></td><td>' + o.total.toFixed(2) + ' IQD</td><td>' + relTime(o.created_at) + '</td></tr>').join('');
+    if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">No orders</td></tr>'; return; }
+    tbody.innerHTML = items.map(o => '<tr style="cursor:pointer" onclick="openOrderDetail(\'' + escapeHtml(o.id) + '\')"><td>' + escapeHtml(o.id) + '</td><td>' + escapeHtml(o.user_id) + '</td><td>' + escapeHtml(o.platform) + '</td><td><span class="badge ' + o.status + '">' + o.status.toUpperCase() + '</span></td><td>' + o.total.toFixed(2) + ' IQD</td><td>' + relTime(o.created_at) + '</td><td><button class="top-btn" onclick="event.stopPropagation();openOrderDetail(\'' + escapeHtml(o.id) + '\')">View / Edit</button></td></tr>').join('');
   } catch(e) {}
+}
+
+var allShippingDash = [];
+async function loadShippingDash() {
+  try {
+    const r = await fetch('/api/shipping');
+    allShippingDash = await r.json();
+    document.getElementById('ship-summary').textContent = allShippingDash.length + ' cities';
+    const tbody = document.getElementById('ship-tbody');
+    if (!allShippingDash.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">No shipping rates yet</td></tr>'; return; }
+    tbody.innerHTML = allShippingDash.map(s => '<tr><td>' + escapeHtml(s.city) + '</td><td>' + Number(s.cost).toFixed(2) + ' IQD</td><td>' + relTime(s.updated_at) + '</td><td><button class="top-btn" onclick="editShipDash(' + s.id + ')">Edit</button> <button class="top-btn danger" onclick="deleteShipDash(' + s.id + ',' + JSON.stringify(s.city) + ')">Delete</button></td></tr>').join('');
+  } catch(e) { toast('Failed to load shipping', 'err'); }
+}
+function editShipDash(id) {
+  const s = allShippingDash.find(x => x.id === id);
+  if (!s) return;
+  document.getElementById('ship-edit-id').value = s.id;
+  document.getElementById('ship-city').value = s.city;
+  document.getElementById('ship-cost').value = s.cost;
+  document.getElementById('ship-cancel-btn').style.display = '';
+}
+function cancelShipEditDash() {
+  document.getElementById('ship-edit-id').value = '';
+  document.getElementById('ship-city').value = '';
+  document.getElementById('ship-cost').value = '0';
+  document.getElementById('ship-cancel-btn').style.display = 'none';
+}
+async function saveShippingDash() {
+  const city = document.getElementById('ship-city').value.trim();
+  const cost = parseFloat(document.getElementById('ship-cost').value) || 0;
+  if (!city) { toast('City is required', 'err'); return; }
+  if (cost < 0) { toast('Cost cannot be negative', 'err'); return; }
+  const editId = document.getElementById('ship-edit-id').value;
+  try {
+    const url = editId ? '/api/shipping/' + editId : '/api/shipping';
+    const method = editId ? 'PUT' : 'POST';
+    const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify({city, cost})});
+    const result = await r.json();
+    if (result.error) { toast(result.error, 'err'); return; }
+    toast(editId ? 'Shipping rate updated' : 'Shipping rate added');
+    cancelShipEditDash();
+    loadShippingDash();
+  } catch(e) { toast('Save failed', 'err'); }
+}
+async function deleteShipDash(id, city) {
+  if (!confirm('Delete shipping rate for "' + city + '"?')) return;
+  try {
+    const r = await fetch('/api/shipping/' + id, {method:'DELETE'});
+    const result = await r.json();
+    if (result.error) { toast(result.error, 'err'); return; }
+    toast('Deleted: ' + city);
+    loadShippingDash();
+  } catch(e) { toast('Delete failed', 'err'); }
+}
+
+const ORDER_STATUSES = ['pending','confirmed','processing','shipped','delivered','cancelled','refunded'];
+const ORDER_PAYMENT_STATUSES = ['pending','paid','failed','refunded'];
+
+function selectOptions(values, current) {
+  return values.map(v => '<option value="' + v + '"' + (v === current ? ' selected' : '') + '>' + v.charAt(0).toUpperCase() + v.slice(1) + '</option>').join('');
+}
+
+function readonlyField(label, value) {
+  return '<div class="form-group"><label>' + label + '</label><input readonly value="' + escapeHtml(value === undefined || value === null || value === '' ? '--' : value) + '"></div>';
+}
+
+async function openOrderDetail(orderId) {
+  try {
+    const r = await fetch('/api/orders/detail/' + encodeURIComponent(orderId));
+    const o = await r.json();
+    if (o.error) { toast(o.error, 'err'); return; }
+
+    document.getElementById('order-detail-title').textContent = o.id;
+
+    let itemsHtml = '';
+    if (o.items && o.items.length) {
+      itemsHtml = '<table class="data-table" style="margin-top:10px"><thead><tr><th>Product</th><th>SKU</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead><tbody>' +
+        o.items.map(it => '<tr><td>' + escapeHtml(it.product_name) + '</td><td>' + escapeHtml(it.product_sku || '--') + '</td><td>' + it.quantity + '</td><td>' + it.unit_price.toFixed(2) + '</td><td>' + it.total_price.toFixed(2) + '</td></tr>').join('') +
+        '</tbody></table>';
+    }
+
+    // Read-only: identity, computed/derived amounts, timestamps, and fields
+    // that are set by the order flow itself rather than hand-edited here
+    // (tracking_number, transaction_id, customer_notes).
+    const readonlySection =
+      '<div class="form-grid" style="grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">' +
+      readonlyField('Order ID', o.id) +
+      readonlyField('User ID', o.user_id) +
+      readonlyField('Platform', o.platform) +
+      readonlyField('Subtotal', (o.subtotal || 0).toFixed(2) + ' IQD') +
+      readonlyField('Total', o.total.toFixed(2) + ' IQD') +
+      readonlyField('Tracking Number', o.tracking_number) +
+      readonlyField('Transaction ID', o.transaction_id) +
+      readonlyField('Created', new Date(o.created_at).toLocaleString()) +
+      readonlyField('Confirmed', o.confirmed_at ? new Date(o.confirmed_at).toLocaleString() : '') +
+      readonlyField('Shipped', o.shipped_at ? new Date(o.shipped_at).toLocaleString() : '') +
+      readonlyField('Delivered', o.delivered_at ? new Date(o.delivered_at).toLocaleString() : '') +
+      readonlyField('Cancelled', o.cancelled_at ? new Date(o.cancelled_at).toLocaleString() : '') +
+      readonlyField('Last Updated', new Date(o.updated_at).toLocaleString()) +
+      '</div>' +
+      '<div class="form-group" style="margin-bottom:14px"><label>Customer Notes</label><textarea readonly style="min-height:40px">' + escapeHtml(o.customer_notes || '--') + '</textarea></div>';
+
+    // Editable fields — this is the exact, deliberately-scoped set: status
+    // plus the order-management columns a staff member should be able to
+    // correct after the fact.
+    const editableSection =
+      '<div style="margin-bottom:6px;font-weight:700;color:var(--fg-hi);font-size:13px">Editable</div>' +
+      '<input type="hidden" id="edit-order-id" value="' + escapeHtml(o.id) + '">' +
+      '<div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">' +
+        '<div class="form-group"><label>Status</label><select id="edit-status">' + selectOptions(ORDER_STATUSES, o.status) + '</select></div>' +
+        '<div class="form-group"><label>Payment Status</label><select id="edit-payment-status">' + selectOptions(ORDER_PAYMENT_STATUSES, o.payment_status) + '</select></div>' +
+        '<div class="form-group"><label>Payment Method</label><input type="text" id="edit-payment-method" value="' + escapeHtml(o.payment_method || '') + '" placeholder="e.g. Cash, Card, Transfer"></div>' +
+        '<div class="form-group"><label>Shipping Method</label><input type="text" id="edit-shipping-method" value="' + escapeHtml(o.shipping_method || '') + '" placeholder="e.g. Standard, Express"></div>' +
+        '<div class="form-group"><label>Shipping Cost (IQD)</label><input type="number" min="0" step="0.01" id="edit-shipping-cost" value="' + (o.shipping_cost || 0) + '"></div>' +
+        '<div class="form-group"><label>Tax (IQD)</label><input type="number" min="0" step="0.01" id="edit-tax" value="' + (o.tax || 0) + '"></div>' +
+        '<div class="form-group"><label>Discount (IQD)</label><input type="number" min="0" step="0.01" id="edit-discount-amount" value="' + (o.discount_amount || 0) + '"></div>' +
+        '<div class="form-group"><label>Platform Conversation ID</label><input type="text" id="edit-platform-conversation-id" value="' + escapeHtml(o.platform_conversation_id || '') + '"></div>' +
+      '</div>' +
+      '<div class="form-group" style="margin-bottom:8px"><label>Shipping Address</label><textarea id="edit-shipping-address" rows="2">' + escapeHtml(o.shipping_address || '') + '</textarea></div>' +
+      '<div class="form-group" style="margin-bottom:8px"><label>Internal Notes</label><textarea id="edit-internal-notes" rows="2">' + escapeHtml(o.internal_notes || '') + '</textarea></div>';
+
+    const conversationSection =
+      '<div style="margin-top:16px">' +
+      '<div style="margin-bottom:6px;font-weight:700;color:var(--fg-hi);font-size:13px">Conversation leading to this order</div>' +
+      '<div style="font-size:11px;color:var(--fg-dim);margin-bottom:8px">Matched by customer + time window around order creation, not by platform_conversation_id — see note below.</div>' +
+      '<div id="order-conv-list" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--bg2)">Loading…</div>' +
+      '</div>';
+
+    document.getElementById('order-detail-body').innerHTML =
+      readonlySection + editableSection + itemsHtml + conversationSection;
+    document.getElementById('order-detail-modal').classList.add('open');
+
+    loadOrderMessages(orderId);
+  } catch(e) { toast('Failed to load order', 'err'); }
+}
+
+async function loadOrderMessages(orderId) {
+  const el = document.getElementById('order-conv-list');
+  try {
+    const r = await fetch('/api/orders/messages/' + encodeURIComponent(orderId));
+    const data = await r.json();
+    if (data.error) { el.innerHTML = '<span style="color:var(--fg-dim);font-size:12px">' + escapeHtml(data.error) + '</span>'; return; }
+    const msgs = data.messages || [];
+    if (!msgs.length) { el.innerHTML = '<span style="color:var(--fg-dim);font-size:12px">No messages found in the time window around this order.</span>'; return; }
+    el.innerHTML = msgs.map(m => {
+      const isOut = m.direction === 'outgoing';
+      return '<div style="display:flex;flex-direction:column;align-items:' + (isOut ? 'flex-end' : 'flex-start') + ';margin-bottom:8px">' +
+        '<div style="max-width:80%;padding:6px 10px;border-radius:8px;font-size:12px;background:' + (isOut ? 'var(--accent-dim,#2a3b55)' : 'var(--bg1)') + ';border:1px solid var(--border)">' +
+        escapeHtml(m.message_text) +
+        (m.final_response ? '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed var(--border);opacity:.85">' + escapeHtml(m.final_response) + '</div>' : '') +
+        '</div>' +
+        '<div style="font-size:10px;color:var(--fg-dim);margin-top:2px">' + (isOut ? 'reply' : 'customer') + (m.intent ? ' · ' + escapeHtml(m.intent) : '') + ' · ' + relTime(m.received_at) + '</div>' +
+        '</div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<span style="color:var(--fg-dim);font-size:12px">Failed to load conversation</span>'; }
+}
+
+async function saveOrderEdit() {
+  const orderId = document.getElementById('edit-order-id').value;
+  const updates = {
+    status: document.getElementById('edit-status').value,
+    payment_status: document.getElementById('edit-payment-status').value,
+    payment_method: document.getElementById('edit-payment-method').value,
+    shipping_method: document.getElementById('edit-shipping-method').value,
+    shipping_cost: parseFloat(document.getElementById('edit-shipping-cost').value) || 0,
+    tax: parseFloat(document.getElementById('edit-tax').value) || 0,
+    discount_amount: parseFloat(document.getElementById('edit-discount-amount').value) || 0,
+    shipping_address: document.getElementById('edit-shipping-address').value,
+    internal_notes: document.getElementById('edit-internal-notes').value,
+    platform_conversation_id: document.getElementById('edit-platform-conversation-id').value
+  };
+
+  try {
+    const r = await fetch('/api/orders/update/' + encodeURIComponent(orderId), {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(updates)
+    });
+    const result = await r.json();
+    if (result.error) { toast(result.error, 'err'); return; }
+    closeModal('order-detail-modal');
+    loadOrders();
+    toast('Order updated', 'ok');
+  } catch(e) { toast('Failed to update order', 'err'); }
 }
 
 async function loadScheduledPosts() {

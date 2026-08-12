@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -14,6 +15,7 @@ type ConfigManager struct {
 	mu         sync.RWMutex
 	config     *Config
 	configPath string
+	baseDir    string
 }
 
 // NewConfigManager creates a new configuration manager.
@@ -21,6 +23,26 @@ func NewConfigManager(configPath string) *ConfigManager {
 	return &ConfigManager{
 		configPath: configPath,
 	}
+}
+
+// SetBaseDir sets the base directory for resolving relative config paths.
+func (cm *ConfigManager) SetBaseDir(baseDir string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.baseDir = baseDir
+}
+
+// resolvePath resolves a path from config relative to baseDir.
+// Absolute paths are returned as-is; empty strings are returned as-is.
+// Relative paths are joined with baseDir (if set).
+func (cm *ConfigManager) resolvePath(path string) string {
+	if path == "" || cm.baseDir == "" {
+		return path
+	}
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(cm.baseDir, path)
 }
 
 // ============ CORE METHODS ============
@@ -280,6 +302,40 @@ func (cm *ConfigManager) SetWakePolicy(policy WakePolicy) {
 	defer cm.mu.Unlock()
 	if cm.config != nil {
 		cm.config.System.WakePolicy = policy
+	}
+}
+
+func (cm *ConfigManager) GetLLMTokensPerMinute() int {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if cm.config == nil {
+		return 0
+	}
+	return cm.config.System.LLMTokensPerMinute
+}
+
+func (cm *ConfigManager) SetLLMTokensPerMinute(tokens int) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.config != nil {
+		cm.config.System.LLMTokensPerMinute = tokens
+	}
+}
+
+func (cm *ConfigManager) GetLLMCostPerMinute() float64 {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if cm.config == nil {
+		return 0
+	}
+	return cm.config.System.LLMCostPerMinute
+}
+
+func (cm *ConfigManager) SetLLMCostPerMinute(cost float64) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.config != nil {
+		cm.config.System.LLMCostPerMinute = cost
 	}
 }
 
@@ -671,23 +727,6 @@ func (cm *ConfigManager) SetQuietHours(qh QuietHours) {
 	}
 }
 
-func (cm *ConfigManager) GetRateLimits() RateLimits {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil {
-		return RateLimits{}
-	}
-	return cm.config.Scheduler.RateLimits
-}
-
-func (cm *ConfigManager) SetRateLimits(rl RateLimits) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Scheduler.RateLimits = rl
-	}
-}
-
 func (cm *ConfigManager) GetQuietHoursEnabled() bool {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -736,57 +775,6 @@ func (cm *ConfigManager) SetQuietHoursTo(to string) {
 	defer cm.mu.Unlock()
 	if cm.config != nil {
 		cm.config.Scheduler.QuietHours.To = to
-	}
-}
-
-func (cm *ConfigManager) GetRateLimitMessagesPerMinute() int {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil {
-		return 0
-	}
-	return cm.config.Scheduler.RateLimits.MessagesPerMinute
-}
-
-func (cm *ConfigManager) SetRateLimitMessagesPerMinute(limit int) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Scheduler.RateLimits.MessagesPerMinute = limit
-	}
-}
-
-func (cm *ConfigManager) GetRateLimitPostsPerHour() int {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil {
-		return 0
-	}
-	return cm.config.Scheduler.RateLimits.PostsPerHour
-}
-
-func (cm *ConfigManager) SetRateLimitPostsPerHour(limit int) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Scheduler.RateLimits.PostsPerHour = limit
-	}
-}
-
-func (cm *ConfigManager) GetRateLimitPostsPerDay() int {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil {
-		return 0
-	}
-	return cm.config.Scheduler.RateLimits.PostsPerDay
-}
-
-func (cm *ConfigManager) SetRateLimitPostsPerDay(limit int) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Scheduler.RateLimits.PostsPerDay = limit
 	}
 }
 
@@ -1277,54 +1265,6 @@ func (cm *ConfigManager) SetPlatformAutomation(name string, auto AutomationConfi
 	}
 }
 
-func (cm *ConfigManager) GetPlatformPosting(name string) PlatformPostingConfig {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil || cm.config.Platforms == nil {
-		return PlatformPostingConfig{}
-	}
-	platform, exists := cm.config.Platforms[name]
-	if !exists {
-		return PlatformPostingConfig{}
-	}
-	return platform.Posting
-}
-
-func (cm *ConfigManager) SetPlatformPosting(name string, posting PlatformPostingConfig) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil && cm.config.Platforms != nil {
-		if platform, exists := cm.config.Platforms[name]; exists {
-			platform.Posting = posting
-			cm.config.Platforms[name] = platform
-		}
-	}
-}
-
-func (cm *ConfigManager) GetPlatformLimits(name string) PlatformLimits {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil || cm.config.Platforms == nil {
-		return PlatformLimits{}
-	}
-	platform, exists := cm.config.Platforms[name]
-	if !exists {
-		return PlatformLimits{}
-	}
-	return platform.Limits
-}
-
-func (cm *ConfigManager) SetPlatformLimits(name string, limits PlatformLimits) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil && cm.config.Platforms != nil {
-		if platform, exists := cm.config.Platforms[name]; exists {
-			platform.Limits = limits
-			cm.config.Platforms[name] = platform
-		}
-	}
-}
-
 func (cm *ConfigManager) GetPlatformMetadata(name string) PlatformMetadata {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -1398,30 +1338,6 @@ func (cm *ConfigManager) SetPlatformMessages(name string, messages MessageTempla
 }
 
 // ============ PLATFORM AUTOMATION SUB-GETTERS/SETTERS ============
-
-func (cm *ConfigManager) GetPlatformAutoReply(name string) AutoReplyConfig {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil || cm.config.Platforms == nil {
-		return AutoReplyConfig{}
-	}
-	platform, exists := cm.config.Platforms[name]
-	if !exists {
-		return AutoReplyConfig{}
-	}
-	return platform.Automation.AutoReply
-}
-
-func (cm *ConfigManager) SetPlatformAutoReply(name string, auto AutoReplyConfig) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil && cm.config.Platforms != nil {
-		if platform, exists := cm.config.Platforms[name]; exists {
-			platform.Automation.AutoReply = auto
-			cm.config.Platforms[name] = platform
-		}
-	}
-}
 
 func (cm *ConfigManager) GetPlatformAutoHeart(name string) AutoHeartConfig {
 	cm.mu.RLock()
@@ -1591,150 +1507,6 @@ func (cm *ConfigManager) SetPlatformMessageFilters(name string, filters MessageF
 	}
 }
 
-// ============ PLATFORM POSTING SUB-GETTERS/SETTERS ============
-
-func (cm *ConfigManager) GetPlatformPostingRandom(name string) RandomPostingConfig {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil || cm.config.Platforms == nil {
-		return RandomPostingConfig{}
-	}
-	platform, exists := cm.config.Platforms[name]
-	if !exists {
-		return RandomPostingConfig{}
-	}
-	return platform.Posting.Random
-}
-
-func (cm *ConfigManager) SetPlatformPostingRandom(name string, random RandomPostingConfig) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil && cm.config.Platforms != nil {
-		if platform, exists := cm.config.Platforms[name]; exists {
-			platform.Posting.Random = random
-			cm.config.Platforms[name] = platform
-		}
-	}
-}
-
-func (cm *ConfigManager) GetPlatformPostingManual(name string) ManualPostingConfig {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil || cm.config.Platforms == nil {
-		return ManualPostingConfig{}
-	}
-	platform, exists := cm.config.Platforms[name]
-	if !exists {
-		return ManualPostingConfig{}
-	}
-	return platform.Posting.Manual
-}
-
-func (cm *ConfigManager) SetPlatformPostingManual(name string, manual ManualPostingConfig) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil && cm.config.Platforms != nil {
-		if platform, exists := cm.config.Platforms[name]; exists {
-			platform.Posting.Manual = manual
-			cm.config.Platforms[name] = platform
-		}
-	}
-}
-
-func (cm *ConfigManager) GetPlatformScheduleTimes(name string) []string {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil || cm.config.Platforms == nil {
-		return []string{}
-	}
-	platform, exists := cm.config.Platforms[name]
-	if !exists {
-		return []string{}
-	}
-	return platform.Posting.ScheduleTimes
-}
-
-func (cm *ConfigManager) SetPlatformScheduleTimes(name string, times []string) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil && cm.config.Platforms != nil {
-		if platform, exists := cm.config.Platforms[name]; exists {
-			platform.Posting.ScheduleTimes = times
-			cm.config.Platforms[name] = platform
-		}
-	}
-}
-
-// ============ POSTING GETTERS/SETTERS ============
-
-func (cm *ConfigManager) GetPosting() PostingConfig {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil {
-		return PostingConfig{}
-	}
-	return cm.config.Posting
-}
-
-func (cm *ConfigManager) SetPosting(posting PostingConfig) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Posting = posting
-	}
-}
-
-func (cm *ConfigManager) GetRotationMode() string {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil {
-		return ""
-	}
-	return cm.config.Posting.RotationMode
-}
-
-func (cm *ConfigManager) SetRotationMode(mode string) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Posting.RotationMode = mode
-	}
-}
-
-func (cm *ConfigManager) GetFallbackPosting() FallbackPosting {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil {
-		return FallbackPosting{}
-	}
-	return cm.config.Posting.Fallback
-}
-
-func (cm *ConfigManager) SetFallbackPosting(fallback FallbackPosting) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Posting.Fallback = fallback
-	}
-}
-
-func (cm *ConfigManager) GetScheduledPostsSummary() map[string]int {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if cm.config == nil || cm.config.Posting.ScheduledPostsSummary == nil {
-		return make(map[string]int)
-	}
-	return cm.config.Posting.ScheduledPostsSummary
-}
-
-func (cm *ConfigManager) SetScheduledPostsSummary(summary map[string]int) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if cm.config != nil {
-		cm.config.Posting.ScheduledPostsSummary = summary
-	}
-}
-
 // ============ PATHS GETTERS/SETTERS ============
 
 func (cm *ConfigManager) GetPaths() PathsConfig {
@@ -1760,7 +1532,7 @@ func (cm *ConfigManager) GetLogsPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Logs
+	return cm.resolvePath(cm.config.Paths.Logs)
 }
 
 func (cm *ConfigManager) SetLogsPath(path string) {
@@ -1777,7 +1549,7 @@ func (cm *ConfigManager) GetConfigPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Config
+	return cm.resolvePath(cm.config.Paths.Config)
 }
 
 func (cm *ConfigManager) SetConfigPath(path string) {
@@ -1794,7 +1566,7 @@ func (cm *ConfigManager) GetCachePath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Cache
+	return cm.resolvePath(cm.config.Paths.Cache)
 }
 
 func (cm *ConfigManager) SetCachePath(path string) {
@@ -1811,7 +1583,7 @@ func (cm *ConfigManager) GetMediaPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Media
+	return cm.resolvePath(cm.config.Paths.Media)
 }
 
 func (cm *ConfigManager) SetMediaPath(path string) {
@@ -1828,7 +1600,7 @@ func (cm *ConfigManager) GetModelsPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Models
+	return cm.resolvePath(cm.config.Paths.Models)
 }
 
 func (cm *ConfigManager) SetModelsPath(path string) {
@@ -1845,7 +1617,7 @@ func (cm *ConfigManager) GetTempPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Temp
+	return cm.resolvePath(cm.config.Paths.Temp)
 }
 
 func (cm *ConfigManager) SetTempPath(path string) {
@@ -1862,7 +1634,7 @@ func (cm *ConfigManager) GetSessionsPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Sessions
+	return cm.resolvePath(cm.config.Paths.Sessions)
 }
 
 func (cm *ConfigManager) SetSessionsPath(path string) {
@@ -1879,7 +1651,7 @@ func (cm *ConfigManager) GetDatabasePath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Database
+	return cm.resolvePath(cm.config.Paths.Database)
 }
 
 func (cm *ConfigManager) SetDatabasePath(path string) {
@@ -1896,7 +1668,7 @@ func (cm *ConfigManager) GetBackupPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.Backup
+	return cm.resolvePath(cm.config.Paths.Backup)
 }
 
 func (cm *ConfigManager) SetBackupPath(path string) {
@@ -1913,7 +1685,7 @@ func (cm *ConfigManager) GetPostImagesPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.PostImages
+	return cm.resolvePath(cm.config.Paths.PostImages)
 }
 
 func (cm *ConfigManager) SetPostImagesPath(path string) {
@@ -1930,7 +1702,7 @@ func (cm *ConfigManager) GetProductImagesPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.ProductImages
+	return cm.resolvePath(cm.config.Paths.ProductImages)
 }
 
 func (cm *ConfigManager) SetProductImagesPath(path string) {
@@ -1947,7 +1719,7 @@ func (cm *ConfigManager) GetPostVideosPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.PostVideos
+	return cm.resolvePath(cm.config.Paths.PostVideos)
 }
 
 func (cm *ConfigManager) SetPostVideosPath(path string) {
@@ -1964,7 +1736,7 @@ func (cm *ConfigManager) GetScheduledPostsPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.ScheduledPosts
+	return cm.resolvePath(cm.config.Paths.ScheduledPosts)
 }
 
 func (cm *ConfigManager) SetScheduledPostsPath(path string) {
@@ -1981,7 +1753,7 @@ func (cm *ConfigManager) GetTrainingImagesPath() string {
 	if cm.config == nil {
 		return ""
 	}
-	return cm.config.Paths.TrainingImages
+	return cm.resolvePath(cm.config.Paths.TrainingImages)
 }
 
 func (cm *ConfigManager) SetTrainingImagesPath(path string) {
@@ -2223,11 +1995,6 @@ func (cm *ConfigManager) AddScheduledPost(post ScheduledPost) {
 	}
 
 	cm.config.ScheduledPosts = append(cm.config.ScheduledPosts, post)
-
-	if cm.config.Posting.ScheduledPostsSummary == nil {
-		cm.config.Posting.ScheduledPostsSummary = make(map[string]int)
-	}
-	cm.config.Posting.ScheduledPostsSummary[post.Status]++
 }
 
 func (cm *ConfigManager) UpdateScheduledPost(id string, post ScheduledPost) bool {
@@ -2244,16 +2011,6 @@ func (cm *ConfigManager) UpdateScheduledPost(id string, post ScheduledPost) bool
 				post.CreatedAt = p.CreatedAt
 			}
 			post.UpdatedAt = time.Now().Format(time.RFC3339)
-
-			if p.Status != post.Status {
-				if cm.config.Posting.ScheduledPostsSummary == nil {
-					cm.config.Posting.ScheduledPostsSummary = make(map[string]int)
-				}
-				if cm.config.Posting.ScheduledPostsSummary[p.Status] > 0 {
-					cm.config.Posting.ScheduledPostsSummary[p.Status]--
-				}
-				cm.config.Posting.ScheduledPostsSummary[post.Status]++
-			}
 
 			cm.config.ScheduledPosts[i] = post
 			return true
@@ -2272,10 +2029,6 @@ func (cm *ConfigManager) RemoveScheduledPost(id string) bool {
 
 	for i, post := range cm.config.ScheduledPosts {
 		if post.ID == id {
-			if cm.config.Posting.ScheduledPostsSummary != nil &&
-				cm.config.Posting.ScheduledPostsSummary[post.Status] > 0 {
-				cm.config.Posting.ScheduledPostsSummary[post.Status]--
-			}
 			cm.config.ScheduledPosts = append(
 				cm.config.ScheduledPosts[:i],
 				cm.config.ScheduledPosts[i+1:]...,
